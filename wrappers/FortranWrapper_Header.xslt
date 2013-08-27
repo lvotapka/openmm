@@ -21,6 +21,7 @@
 <xsl:variable name="map_property_type_id" select="/GCC_XML/Class[starts-with(@name, 'map&lt;std::basic_string') and not(contains(@name, 'double'))]/@id"/>
 <xsl:variable name="vector_double_type_id" select="/GCC_XML/Class[starts-with(@name, 'vector&lt;double')]/@id"/>
 <xsl:variable name="vector_int_type_id" select="/GCC_XML/Class[starts-with(@name, 'vector&lt;int')]/@id"/>
+<xsl:variable name="set_int_type_id" select="/GCC_XML/Class[starts-with(@name, 'set&lt;int')]/@id"/>
 <xsl:variable name="newline">
 <xsl:text>
 </xsl:text>
@@ -74,6 +75,10 @@ MODULE OpenMM_Types
     end type
 
     type OpenMM_IntArray
+        integer*8 :: handle = 0
+    end type
+
+    type OpenMM_IntSet
         integer*8 :: handle = 0
     end type
 
@@ -513,6 +518,9 @@ END MODULE OpenMM
   </xsl:when>
   <xsl:when test="$type_id=$vector_int_type_id">
    <xsl:value-of select="concat('type (OpenMM_IntArray) ', $value)"/>
+  </xsl:when>
+  <xsl:when test="$type_id=$set_int_type_id">
+   <xsl:value-of select="concat('type (OpenMM_IntSet) ', $value)"/>
   </xsl:when>
   <xsl:when test="local-name($node)='ReferenceType' or local-name($node)='PointerType'">
    <xsl:call-template name="declare_argument">
