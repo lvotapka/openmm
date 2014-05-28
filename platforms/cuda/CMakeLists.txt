@@ -1,22 +1,16 @@
 #---------------------------------------------------
 # OpenMM CUDA Platform
 #
-# Creates OpenMM library, base name=OpenMMCUDA.
-# Default libraries are shared & optimized. Variants
-# are created for static (_static) and debug (_d).
+# Creates OpenMMCUDA library.
 #
 # Windows:
-#   OpenMMCUDA[_d].dll
-#   OpenMMCUDA[_d].lib
-#   OpenMMCUDA_static[_d].lib
+#   OpenMMCUDA.dll
+#   OpenMMCUDA.lib
+#   OpenMMCUDA_static.lib
 # Unix:
-#   libOpenMMCUDA[_d].so
-#   libOpenMMCUDA_static[_d].a
+#   libOpenMMCUDA.so
+#   libOpenMMCUDA_static.a
 #----------------------------------------------------
-
-IF (APPLE)
-    SET (CMAKE_OSX_DEPLOYMENT_TARGET "10.6")
-ENDIF (APPLE)
 
 set(OPENMM_BUILD_CUDA_TESTS TRUE CACHE BOOL "Whether to build CUDA test cases")
 if(OPENMM_BUILD_CUDA_TESTS)
@@ -35,19 +29,6 @@ SET(OPENMMCUDA_LIBRARY_NAME OpenMMCUDA)
 
 SET(SHARED_TARGET ${OPENMMCUDA_LIBRARY_NAME})
 SET(STATIC_TARGET ${OPENMMCUDA_LIBRARY_NAME}_static)
-
-
-# Ensure that debug libraries have "_d" appended to their names.
-# CMake gets this right on Windows automatically with this definition.
-IF (${CMAKE_GENERATOR} MATCHES "Visual Studio")
-    SET(CMAKE_DEBUG_POSTFIX "_d" CACHE INTERNAL "" FORCE)
-ENDIF (${CMAKE_GENERATOR} MATCHES "Visual Studio")
-
-# But on Unix or Cygwin we have to add the suffix manually
-IF (UNIX AND CMAKE_BUILD_TYPE MATCHES Debug)
-    SET(SHARED_TARGET ${SHARED_TARGET}_d)
-    SET(STATIC_TARGET ${STATIC_TARGET}_d)
-ENDIF (UNIX AND CMAKE_BUILD_TYPE MATCHES Debug)
 
 
 # These are all the places to search for header files which are
@@ -108,3 +89,6 @@ FILE(GLOB CORE_HEADERS include/*.h)
 INSTALL_FILES(/include/openmm/cuda FILES ${CORE_HEADERS})
 
 SUBDIRS (sharedTarget)
+IF(OPENMM_BUILD_STATIC_LIB)
+    SUBDIRS (staticTarget)
+ENDIF(OPENMM_BUILD_STATIC_LIB)

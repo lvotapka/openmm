@@ -56,6 +56,7 @@ void testOBC(GBSAOBCForce::NonbondedMethod obcMethod, CustomGBForce::NonbondedMe
     const int numMolecules = 70;
     const int numParticles = numMolecules*2;
     const double boxSize = 10.0;
+    const double cutoff = 2.0;
 
     // Create two systems: one with a GBSAOBCForce, and one using a CustomGBForce to implement the same interaction.
 
@@ -69,8 +70,8 @@ void testOBC(GBSAOBCForce::NonbondedMethod obcMethod, CustomGBForce::NonbondedMe
     customSystem.setDefaultPeriodicBoxVectors(Vec3(boxSize, 0.0, 0.0), Vec3(0.0, boxSize, 0.0), Vec3(0.0, 0.0, boxSize));
     GBSAOBCForce* obc = new GBSAOBCForce();
     CustomGBForce* custom = new CustomGBForce();
-    obc->setCutoffDistance(2.0);
-    custom->setCutoffDistance(2.0);
+    obc->setCutoffDistance(cutoff);
+    custom->setCutoffDistance(cutoff);
     custom->addPerParticleParameter("q");
     custom->addPerParticleParameter("radius");
     custom->addPerParticleParameter("scale");
@@ -86,7 +87,13 @@ void testOBC(GBSAOBCForce::NonbondedMethod obcMethod, CustomGBForce::NonbondedMe
     custom->addComputedValue("B", "1/(1/or-tanh(1*psi-0.8*psi^2+4.85*psi^3)/radius);"
                                   "psi=I*or; or=radius-0.009", CustomGBForce::SingleParticle);
     custom->addEnergyTerm("28.3919551*(radius+0.14)^2*(radius/B)^6-0.5*138.935456*(1/soluteDielectric-1/solventDielectric)*q^2/B", CustomGBForce::SingleParticle);
-    custom->addEnergyTerm("-138.935456*(1/soluteDielectric-1/solventDielectric)*q1*q2/f;"
+    string invCutoffString = "";
+    if (obcMethod != GBSAOBCForce::NoCutoff) {
+        stringstream s;
+        s<<(1.0/cutoff);
+        invCutoffString = s.str();
+    }
+    custom->addEnergyTerm("138.935485*(1/soluteDielectric-1/solventDielectric)*q1*q2*("+invCutoffString+"-1/f);"
                           "f=sqrt(r^2+B1*B2*exp(-r^2/(4*B1*B2)))", CustomGBForce::ParticlePairNoExclusions);
     vector<Vec3> positions(numParticles);
     vector<Vec3> velocities(numParticles);
@@ -241,7 +248,7 @@ void testMembrane() {
     for (int i = 0; i < (int) forces.size(); ++i)
         norm += forces[i].dot(forces[i]);
     norm = std::sqrt(norm);
-    const double stepSize = 1e-3;
+    const double stepSize = 1e-2;
     double step = 0.5*stepSize/norm;
     vector<Vec3> positions2(numParticles), positions3(numParticles);
     for (int i = 0; i < (int) positions.size(); ++i) {
@@ -270,7 +277,7 @@ void testTabulatedFunction() {
     vector<double> table;
     for (int i = 0; i < 21; i++)
         table.push_back(std::sin(0.25*i));
-    force->addFunction("fn", table, 1.0, 6.0);
+    force->addTabulatedFunction("fn", new Continuous1DFunction(table, 1.0, 6.0));
     system.addForce(force);
     Context context(system, integrator, platform);
     vector<Vec3> positions(2);

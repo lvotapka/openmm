@@ -33,6 +33,10 @@
 #include "openmm/System.h"
 #include <algorithm>
 #include <sstream>
+#ifdef __APPLE__
+#include "sys/sysctl.h"
+#endif
+
 
 using namespace OpenMM;
 using std::map;
@@ -40,9 +44,17 @@ using std::string;
 using std::stringstream;
 using std::vector;
 
-extern "C" OPENMM_EXPORT_OPENCL void registerPlatforms() {
-    Platform::registerPlatform(new OpenCLPlatform());
+#ifdef OPENMM_OPENCL_BUILDING_STATIC_LIBRARY
+extern "C" void registerOpenCLPlatform() {
+    if (OpenCLPlatform::isPlatformSupported())
+        Platform::registerPlatform(new OpenCLPlatform());
 }
+#else
+extern "C" OPENMM_EXPORT_OPENCL void registerPlatforms() {
+    if (OpenCLPlatform::isPlatformSupported())
+        Platform::registerPlatform(new OpenCLPlatform());
+}
+#endif
 
 OpenCLPlatform::OpenCLPlatform() {
     OpenCLKernelFactory* factory = new OpenCLKernelFactory();
@@ -96,6 +108,33 @@ bool OpenCLPlatform::supportsDoublePrecision() const {
     return true;
 }
 
+bool OpenCLPlatform::isPlatformSupported() {
+    // Return false for OpenCL implementations that are known
+    // to be buggy (Apple OSX since 10.7.5)
+
+#ifdef __APPLE__
+    char str[256];
+    size_t size = sizeof(str);
+    int ret = sysctlbyname("kern.osrelease", str, &size, NULL, 0);
+    if (ret != 0)
+        return false;
+
+    int major, minor, micro;
+    if (sscanf(str, "%d.%d.%d", &major, &minor, &micro) != 3)
+        return false;
+
+    if ((major > 11) || (major == 11 && minor > 4) || (major == 11 && minor == 4 && micro >= 2))
+        // 11.4.2 is the darwin release corresponding to OSX 10.7.5, which is the
+        // point at which a number of serious bugs were introduced into the
+        // Apple OpenCL libraries, resulting in catistrophically incorrect MD simulations
+        // (see https://github.com/SimTk/openmm/issues/395 for example). Once a fix is released,
+        // this version check should be updated.
+        return false;
+#endif
+
+    return true;
+}
+
 const string& OpenCLPlatform::getPropertyValue(const Context& context, const string& property) const {
     const ContextImpl& impl = getContextImpl(context);
     const PlatformData* data = reinterpret_cast<const PlatformData*>(impl.getPlatformData());
@@ -143,15 +182,24 @@ OpenCLPlatform::PlatformData::PlatformData(const System& system, const string& p
         searchPos = nextPos+1;
     }
     devices.push_back(deviceIndexProperty.substr(searchPos));
-    for (int i = 0; i < (int) devices.size(); i++) {
-        if (devices[i].length() > 0) {
-            unsigned int deviceIndex;
-            stringstream(devices[i]) >> deviceIndex;
-            contexts.push_back(new OpenCLContext(system, platformIndex, deviceIndex, precisionProperty, *this));
+    try {
+        for (int i = 0; i < (int) devices.size(); i++) {
+            if (devices[i].length() > 0) {
+                unsigned int deviceIndex;
+                stringstream(devices[i]) >> deviceIndex;
+                contexts.push_back(new OpenCLContext(system, platformIndex, deviceIndex, precisionProperty, *this));
+            }
         }
+        if (contexts.size() == 0)
+            contexts.push_back(new OpenCLContext(system, platformIndex, -1, precisionProperty, *this));
     }
-    if (contexts.size() == 0)
-        contexts.push_back(new OpenCLContext(system, platformIndex, -1, precisionProperty, *this));
+    catch (...) {
+        // If an exception was thrown, do our best to clean up memory.
+        
+        for (int i = 0; i < (int) contexts.size(); i++)
+            delete contexts[i];
+        throw;
+    }
     stringstream deviceIndex, deviceName;
     for (int i = 0; i < (int) contexts.size(); i++) {
         if (i > 0) {

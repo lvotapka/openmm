@@ -34,7 +34,7 @@
 #include "openmm/OpenMMException.h"
 #include "openmm/internal/ContextImpl.h"
 #include "SimTKOpenMMUtilities.h"
-#include "ReferenceCCMAAlgorithm.h"
+#include "ReferenceConstraints.h"
 #include "ReferenceVirtualSites.h"
 #include <set>
 
@@ -56,21 +56,12 @@ static vector<RealVec>& extractForces(ContextImpl& context) {
     return *((vector<RealVec>*) data->forces);
 }
 
-static void findAnglesForCCMA(const System& system, vector<ReferenceCCMAAlgorithm::AngleInfo>& angles) {
-    for (int i = 0; i < system.getNumForces(); i++) {
-        const HarmonicAngleForce* force = dynamic_cast<const HarmonicAngleForce*>(&system.getForce(i));
-        if (force != NULL) {
-            for (int j = 0; j < force->getNumAngles(); j++) {
-                int atom1, atom2, atom3;
-                double angle, k;
-                force->getAngleParameters(j, atom1, atom2, atom3, angle, k);
-                angles.push_back(ReferenceCCMAAlgorithm::AngleInfo(atom1, atom2, atom3, (RealOpenMM)angle));
-            }
-        }
-    }
+static ReferenceConstraints& extractConstraints(ContextImpl& context) {
+    ReferencePlatform::PlatformData* data = reinterpret_cast<ReferencePlatform::PlatformData*>(context.getPlatformData());
+    return *(ReferenceConstraints*) data->constraints;
 }
 
-static double computeShiftedKineticEnergy(ContextImpl& context, vector<double>& inverseMasses, double timeShift, ReferenceConstraintAlgorithm* constraints) {
+static double computeShiftedKineticEnergy(ContextImpl& context, vector<double>& inverseMasses, double timeShift) {
     const System& system = context.getSystem();
     int numParticles = system.getNumParticles();
     vector<RealVec>& posData = extractPositions(context);
@@ -89,10 +80,7 @@ static double computeShiftedKineticEnergy(ContextImpl& context, vector<double>& 
     
     // Apply constraints to them.
     
-    if (constraints != NULL) {
-        constraints->setTolerance(1e-4);
-        constraints->applyToVelocities(numParticles, posData, shiftedVel, inverseMasses);
-    }
+    extractConstraints(context).applyToVelocities(posData, shiftedVel, inverseMasses, 1e-4);
     
     // Compute the kinetic energy.
     
@@ -238,8 +226,6 @@ void ReferenceCalcDrudeForceKernel::copyParametersToContext(ContextImpl& context
 }
 
 ReferenceIntegrateDrudeLangevinStepKernel::~ReferenceIntegrateDrudeLangevinStepKernel() {
-    if (constraints != NULL)
-        delete constraints;
 }
 
 void ReferenceIntegrateDrudeLangevinStepKernel::initialize(const System& system, const DrudeLangevinIntegrator& integrator, const DrudeForce& force) {
@@ -268,25 +254,6 @@ void ReferenceIntegrateDrudeLangevinStepKernel::initialize(const System& system,
         pairInvReducedMass.push_back((m1+m2)/(m1*m2));
     }
     normalParticles.insert(normalParticles.begin(), particles.begin(), particles.end());
-    
-    // Prepare constraints.
-    
-    int numConstraints = system.getNumConstraints();
-    if (numConstraints > 0) {
-        vector<pair<int, int> > constraintIndices(numConstraints);
-        vector<RealOpenMM> constraintDistances(numConstraints);
-        for (int i = 0; i < numConstraints; ++i) {
-            int particle1, particle2;
-            double distance;
-            system.getConstraintParameters(i, particle1, particle2, distance);
-            constraintIndices[i].first = particle1;
-            constraintIndices[i].second = particle2;
-            constraintDistances[i] = static_cast<RealOpenMM>(distance);
-        }
-        vector<ReferenceCCMAAlgorithm::AngleInfo> angles;
-        findAnglesForCCMA(system, angles);
-        constraints = new ReferenceCCMAAlgorithm(system.getNumParticles(), numConstraints, constraintIndices, constraintDistances, particleMass, angles, (RealOpenMM)integrator.getConstraintTolerance());
-    }
 }
 
 void ReferenceIntegrateDrudeLangevinStepKernel::execute(ContextImpl& context, const DrudeLangevinIntegrator& integrator) {
@@ -346,8 +313,7 @@ void ReferenceIntegrateDrudeLangevinStepKernel::execute(ContextImpl& context, co
     
     // Apply constraints.
     
-    if (constraints != NULL)
-        constraints->apply(numParticles, pos, xPrime, particleInvMass);
+    extractConstraints(context).apply(pos, xPrime, particleInvMass, integrator.getConstraintTolerance());
     
     // Record the constrained positions and velocities.
     
@@ -364,12 +330,10 @@ void ReferenceIntegrateDrudeLangevinStepKernel::execute(ContextImpl& context, co
 }
 
 double ReferenceIntegrateDrudeLangevinStepKernel::computeKineticEnergy(ContextImpl& context, const DrudeLangevinIntegrator& integrator) {
-    return computeShiftedKineticEnergy(context, particleInvMass, 0.5*integrator.getStepSize(), constraints);
+    return computeShiftedKineticEnergy(context, particleInvMass, 0.5*integrator.getStepSize());
 }
 
 ReferenceIntegrateDrudeSCFStepKernel::~ReferenceIntegrateDrudeSCFStepKernel() {
-    if (constraints != NULL)
-        delete constraints;
     if (minimizerPos != NULL)
         lbfgs_free(minimizerPos);
 }
@@ -391,25 +355,6 @@ void ReferenceIntegrateDrudeSCFStepKernel::initialize(const System& system, cons
         double mass = system.getParticleMass(i);
         particleMass.push_back(mass);
         particleInvMass.push_back(mass == 0.0 ? 0.0 : 1.0/mass);
-    }
-    
-    // Prepare constraints.
-    
-    int numConstraints = system.getNumConstraints();
-    if (numConstraints > 0) {
-        vector<pair<int, int> > constraintIndices(numConstraints);
-        vector<RealOpenMM> constraintDistances(numConstraints);
-        for (int i = 0; i < numConstraints; ++i) {
-            int particle1, particle2;
-            double distance;
-            system.getConstraintParameters(i, particle1, particle2, distance);
-            constraintIndices[i].first = particle1;
-            constraintIndices[i].second = particle2;
-            constraintDistances[i] = static_cast<RealOpenMM>(distance);
-        }
-        vector<ReferenceCCMAAlgorithm::AngleInfo> angles;
-        findAnglesForCCMA(system, angles);
-        constraints = new ReferenceCCMAAlgorithm(system.getNumParticles(), numConstraints, constraintIndices, constraintDistances, particleMass, angles, (RealOpenMM)integrator.getConstraintTolerance());
     }
     
     // Initialize the energy minimizer.
@@ -442,8 +387,7 @@ void ReferenceIntegrateDrudeSCFStepKernel::execute(ContextImpl& context, const D
         
     // Apply constraints.
     
-    if (constraints != NULL)
-        constraints->apply(numParticles, pos, xPrime, particleInvMass);
+    extractConstraints(context).apply(pos, xPrime, particleInvMass, integrator.getConstraintTolerance());
     
     // Record the constrained positions and velocities.
     
@@ -464,7 +408,7 @@ void ReferenceIntegrateDrudeSCFStepKernel::execute(ContextImpl& context, const D
 }
 
 double ReferenceIntegrateDrudeSCFStepKernel::computeKineticEnergy(ContextImpl& context, const DrudeSCFIntegrator& integrator) {
-    return computeShiftedKineticEnergy(context, particleInvMass, 0.5*integrator.getStepSize(), constraints);
+    return computeShiftedKineticEnergy(context, particleInvMass, 0.5*integrator.getStepSize());
 }
 
 struct MinimizerData {

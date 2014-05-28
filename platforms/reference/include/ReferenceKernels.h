@@ -36,6 +36,7 @@
 #include "openmm/kernels.h"
 #include "SimTKOpenMMRealType.h"
 #include "ReferenceNeighborList.h"
+#include "lepton/CompiledExpression.h"
 #include "lepton/ExpressionProgram.h"
 
 class CpuObc;
@@ -190,7 +191,7 @@ private:
 class ReferenceApplyConstraintsKernel : public ApplyConstraintsKernel {
 public:
     ReferenceApplyConstraintsKernel(std::string name, const Platform& platform, ReferencePlatform::PlatformData& data) :
-            ApplyConstraintsKernel(name, platform), data(data), constraints(0) {
+            ApplyConstraintsKernel(name, platform), data(data) {
     }
     ~ReferenceApplyConstraintsKernel();
     /**
@@ -215,12 +216,8 @@ public:
     void applyToVelocities(ContextImpl& context, double tol);
 private:
     ReferencePlatform::PlatformData& data;
-    ReferenceConstraintAlgorithm* constraints;
     std::vector<RealOpenMM> masses;
     std::vector<RealOpenMM> inverseMasses;
-    std::vector<std::pair<int, int> > constraintIndices;
-    std::vector<RealOpenMM> constraintDistances;
-    int numConstraints;
 };
 
 /**
@@ -316,7 +313,7 @@ private:
     int numBonds;
     int **bondIndexArray;
     RealOpenMM **bondParamArray;
-    Lepton::ExpressionProgram energyExpression, forceExpression;
+    Lepton::CompiledExpression energyExpression, forceExpression;
     std::vector<std::string> parameterNames, globalParameterNames;
 };
 
@@ -392,7 +389,7 @@ private:
     int numAngles;
     int **angleIndexArray;
     RealOpenMM **angleParamArray;
-    Lepton::ExpressionProgram energyExpression, forceExpression;
+    Lepton::CompiledExpression energyExpression, forceExpression;
     std::vector<std::string> parameterNames, globalParameterNames;
 };
 
@@ -534,7 +531,7 @@ private:
     int numTorsions;
     int **torsionIndexArray;
     RealOpenMM **torsionParamArray;
-    Lepton::ExpressionProgram energyExpression, forceExpression;
+    Lepton::CompiledExpression energyExpression, forceExpression;
     std::vector<std::string> parameterNames, globalParameterNames;
 };
 
@@ -621,7 +618,7 @@ private:
     CustomNonbondedForce* forceCopy;
     std::map<std::string, double> globalParamValues;
     std::vector<std::set<int> > exclusions;
-    Lepton::ExpressionProgram energyExpression, forceExpression;
+    Lepton::CompiledExpression energyExpression, forceExpression;
     std::vector<std::string> parameterNames, globalParameterNames;
     std::vector<std::pair<std::set<int>, std::set<int> > > interactionGroups;
     NonbondedMethod nonbondedMethod;
@@ -781,7 +778,7 @@ private:
     int numParticles;
     std::vector<int> particles;
     RealOpenMM **particleParamArray;
-    Lepton::ExpressionProgram energyExpression, forceExpressionX, forceExpressionY, forceExpressionZ;
+    Lepton::CompiledExpression energyExpression, forceExpressionX, forceExpressionY, forceExpressionZ;
     std::vector<std::string> parameterNames, globalParameterNames;
 };
 
@@ -870,7 +867,7 @@ private:
 class ReferenceIntegrateVerletStepKernel : public IntegrateVerletStepKernel {
 public:
     ReferenceIntegrateVerletStepKernel(std::string name, const Platform& platform, ReferencePlatform::PlatformData& data) : IntegrateVerletStepKernel(name, platform),
-        data(data), dynamics(0), constraints(0) {
+        data(data), dynamics(0) {
     }
     ~ReferenceIntegrateVerletStepKernel();
     /**
@@ -897,9 +894,7 @@ public:
 private:
     ReferencePlatform::PlatformData& data;
     ReferenceVerletDynamics* dynamics;
-    ReferenceConstraintAlgorithm* constraints;
     std::vector<RealOpenMM> masses;
-    int numConstraints;
     double prevStepSize;
 };
 
@@ -909,7 +904,7 @@ private:
 class ReferenceIntegrateLangevinStepKernel : public IntegrateLangevinStepKernel {
 public:
     ReferenceIntegrateLangevinStepKernel(std::string name, const Platform& platform, ReferencePlatform::PlatformData& data) : IntegrateLangevinStepKernel(name, platform),
-        data(data), dynamics(0), constraints(0) {
+        data(data), dynamics(0) {
     }
     ~ReferenceIntegrateLangevinStepKernel();
     /**
@@ -936,9 +931,7 @@ public:
 private:
     ReferencePlatform::PlatformData& data;
     ReferenceStochasticDynamics* dynamics;
-    ReferenceConstraintAlgorithm* constraints;
     std::vector<RealOpenMM> masses;
-    int numConstraints;
     double prevTemp, prevFriction, prevStepSize;
 };
 
@@ -948,7 +941,7 @@ private:
 class ReferenceIntegrateBrownianStepKernel : public IntegrateBrownianStepKernel {
 public:
     ReferenceIntegrateBrownianStepKernel(std::string name, const Platform& platform, ReferencePlatform::PlatformData& data) : IntegrateBrownianStepKernel(name, platform),
-        data(data), dynamics(0), constraints(0) {
+        data(data), dynamics(0) {
     }
     ~ReferenceIntegrateBrownianStepKernel();
     /**
@@ -975,9 +968,7 @@ public:
 private:
     ReferencePlatform::PlatformData& data;
     ReferenceBrownianDynamics* dynamics;
-    ReferenceConstraintAlgorithm* constraints;
     std::vector<RealOpenMM> masses;
-    int numConstraints;
     double prevTemp, prevFriction, prevStepSize;
 };
 
@@ -987,7 +978,7 @@ private:
 class ReferenceIntegrateVariableLangevinStepKernel : public IntegrateVariableLangevinStepKernel {
 public:
     ReferenceIntegrateVariableLangevinStepKernel(std::string name, const Platform& platform, ReferencePlatform::PlatformData& data) : IntegrateVariableLangevinStepKernel(name, platform),
-        data(data), dynamics(0), constraints(0) {
+        data(data), dynamics(0) {
     }
     ~ReferenceIntegrateVariableLangevinStepKernel();
     /**
@@ -1016,9 +1007,7 @@ public:
 private:
     ReferencePlatform::PlatformData& data;
     ReferenceVariableStochasticDynamics* dynamics;
-    ReferenceConstraintAlgorithm* constraints;
     std::vector<RealOpenMM> masses;
-    int numConstraints;
     double prevTemp, prevFriction, prevErrorTol;
 };
 
@@ -1028,7 +1017,7 @@ private:
 class ReferenceIntegrateVariableVerletStepKernel : public IntegrateVariableVerletStepKernel {
 public:
     ReferenceIntegrateVariableVerletStepKernel(std::string name, const Platform& platform, ReferencePlatform::PlatformData& data) : IntegrateVariableVerletStepKernel(name, platform),
-        data(data), dynamics(0), constraints(0) {
+        data(data), dynamics(0) {
     }
     ~ReferenceIntegrateVariableVerletStepKernel();
     /**
@@ -1057,9 +1046,7 @@ public:
 private:
     ReferencePlatform::PlatformData& data;
     ReferenceVariableVerletDynamics* dynamics;
-    ReferenceConstraintAlgorithm* constraints;
     std::vector<RealOpenMM> masses;
-    int numConstraints;
     double prevErrorTol;
 };
 
@@ -1069,7 +1056,7 @@ private:
 class ReferenceIntegrateCustomStepKernel : public IntegrateCustomStepKernel {
 public:
     ReferenceIntegrateCustomStepKernel(std::string name, const Platform& platform, ReferencePlatform::PlatformData& data) : IntegrateCustomStepKernel(name, platform),
-        data(data), dynamics(0), constraints(0) {
+        data(data), dynamics(0) {
     }
     ~ReferenceIntegrateCustomStepKernel();
     /**
@@ -1134,10 +1121,8 @@ public:
 private:
     ReferencePlatform::PlatformData& data;
     ReferenceCustomDynamics* dynamics;
-    ReferenceConstraintAlgorithm* constraints;
     std::vector<RealOpenMM> masses, globalValues;
     std::vector<std::vector<OpenMM::RealVec> > perDofValues; 
-    int numConstraints;
 };
 
 /**

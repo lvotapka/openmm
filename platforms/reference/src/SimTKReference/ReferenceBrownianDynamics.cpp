@@ -1,5 +1,5 @@
 
-/* Portions copyright (c) 2006-2012 Stanford University and Simbios.
+/* Portions copyright (c) 2006-2013 Stanford University and Simbios.
  * Contributors: Peter Eastman, Pande Group
  *
  * Permission is hereby granted, free of charge, to any person obtaining
@@ -125,7 +125,7 @@ RealOpenMM ReferenceBrownianDynamics::getFriction( void ) const {
 
 void ReferenceBrownianDynamics::update(const OpenMM::System& system, vector<RealVec>& atomCoordinates,
                                           vector<RealVec>& velocities,
-                                          vector<RealVec>& forces, vector<RealOpenMM>& masses ){
+                                          vector<RealVec>& forces, vector<RealOpenMM>& masses, RealOpenMM tolerance) {
 
    // ---------------------------------------------------------------------------------------
 
@@ -161,8 +161,8 @@ void ReferenceBrownianDynamics::update(const OpenMM::System& system, vector<Real
            }
    }
    ReferenceConstraintAlgorithm* referenceConstraintAlgorithm = getReferenceConstraintAlgorithm();
-   if( referenceConstraintAlgorithm )
-      referenceConstraintAlgorithm->apply( numberOfAtoms, atomCoordinates, xPrime, inverseMasses );
+   if (referenceConstraintAlgorithm)
+      referenceConstraintAlgorithm->apply(atomCoordinates, xPrime, inverseMasses, tolerance);
    
    // Update the positions and velocities.
    

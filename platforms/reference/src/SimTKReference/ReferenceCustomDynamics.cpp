@@ -1,5 +1,5 @@
 
-/* Portions copyright (c) 2011 Stanford University and Simbios.
+/* Portions copyright (c) 2011-2013 Stanford University and Simbios.
  * Contributors: Peter Eastman
  *
  * Permission is hereby granted, free of charge, to any person obtaining
@@ -97,7 +97,7 @@ ReferenceCustomDynamics::~ReferenceCustomDynamics() {
 
 void ReferenceCustomDynamics::update(ContextImpl& context, int numberOfAtoms, vector<RealVec>& atomCoordinates,
                                      vector<RealVec>& velocities, vector<RealVec>& forces, vector<RealOpenMM>& masses,
-                                     map<string, RealOpenMM>& globals, vector<vector<RealVec> >& perDof, bool& forcesAreValid){
+                                     map<string, RealOpenMM>& globals, vector<vector<RealVec> >& perDof, bool& forcesAreValid, RealOpenMM tolerance){
     int numSteps = stepType.size();
     globals.insert(context.getParameters().begin(), context.getParameters().end());
     oldPos = atomCoordinates;
@@ -252,12 +252,12 @@ void ReferenceCustomDynamics::update(ContextImpl& context, int numberOfAtoms, ve
                 break;
             }
             case CustomIntegrator::ConstrainPositions: {
-                getReferenceConstraintAlgorithm()->apply(numberOfAtoms, oldPos, atomCoordinates, inverseMasses);
+                getReferenceConstraintAlgorithm()->apply(oldPos, atomCoordinates, inverseMasses, tolerance);
                 oldPos = atomCoordinates;
                 break;
             }
             case CustomIntegrator::ConstrainVelocities: {
-                getReferenceConstraintAlgorithm()->applyToVelocities(numberOfAtoms, oldPos, velocities, inverseMasses);
+                getReferenceConstraintAlgorithm()->applyToVelocities(oldPos, velocities, inverseMasses, tolerance);
                 break;
             }
             case CustomIntegrator::UpdateContextState: {

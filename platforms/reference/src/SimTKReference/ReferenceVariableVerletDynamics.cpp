@@ -1,5 +1,5 @@
 
-/* Portions copyright (c) 2006-2012 Stanford University and Simbios.
+/* Portions copyright (c) 2006-2013 Stanford University and Simbios.
  * Contributors: Peter Eastman, Pande Group
  *
  * Permission is hereby granted, free of charge, to any person obtaining
@@ -24,6 +24,7 @@
 
 #include <string.h>
 #include <sstream>
+#include <algorithm>
 
 #include "SimTKOpenMMCommon.h"
 #include "SimTKOpenMMLog.h"
@@ -104,7 +105,7 @@ void ReferenceVariableVerletDynamics::setAccuracy( RealOpenMM accuracy ) {
 
 void ReferenceVariableVerletDynamics::update(const OpenMM::System& system, vector<RealVec>& atomCoordinates,
                                           vector<RealVec>& velocities,
-                                          vector<RealVec>& forces, vector<RealOpenMM>& masses, RealOpenMM maxStepSize ){
+                                          vector<RealVec>& forces, vector<RealOpenMM>& masses, RealOpenMM maxStepSize, RealOpenMM tolerance) {
 
     // ---------------------------------------------------------------------------------------
 
@@ -155,7 +156,7 @@ void ReferenceVariableVerletDynamics::update(const OpenMM::System& system, vecto
     }
     ReferenceConstraintAlgorithm* referenceConstraintAlgorithm = getReferenceConstraintAlgorithm();
     if (referenceConstraintAlgorithm)
-        referenceConstraintAlgorithm->apply(numberOfAtoms, atomCoordinates, xPrime, inverseMasses);
+        referenceConstraintAlgorithm->apply(atomCoordinates, xPrime, inverseMasses, tolerance);
 
    // Update the positions and velocities.
 

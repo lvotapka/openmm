@@ -85,6 +85,7 @@ version = '%(version)s'
 full_version = '%(full_version)s'
 git_revision = '%(git_revision)s'
 release = %(isrelease)s
+openmm_library_path = '%(path)s'
 
 if not release:
     version = full_version
@@ -113,7 +114,8 @@ if not release:
         a.write(cnt % {'version': version,
                        'full_version' : full_version,
                        'git_revision' : git_revision,
-                       'isrelease': str(IS_RELEASED)})
+                       'isrelease': str(IS_RELEASED),
+                       'path': os.getenv('OPENMM_LIB_PATH')})
     finally:
         a.close()
 
@@ -142,7 +144,8 @@ def buildKeywordDictionary(major_version_num=MAJOR_VERSION_NUM,
                                           "simtk.unit",
                                           "simtk.openmm",
                                           "simtk.openmm.app",
-                                          "simtk.openmm.app.internal"]
+                                          "simtk.openmm.app.internal",
+                                          "simtk.openmm.app.internal.charmm"]
     setupKeywords["data_files"]        = []
     setupKeywords["package_data"]      = {"simtk" : [],
                                           "simtk.unit" : [],
@@ -164,7 +167,6 @@ def buildKeywordDictionary(major_version_num=MAJOR_VERSION_NUM,
                      ('MINOR_VERSION', minor_version_num)]
 
     libraries=['OpenMM',
-               'OpenMMSerialization', 
                'OpenMMAmoeba',
                'OpenMMRPMD',
                'OpenMMDrude',
@@ -194,11 +196,8 @@ def buildKeywordDictionary(major_version_num=MAJOR_VERSION_NUM,
         extra_compile_args.append('/EHsc')
     else:
         if platform.system() == 'Darwin':
-            macVersion = [int(x) for x in platform.mac_ver()[0].split('.')]
-            if tuple(macVersion) < (10, 6):
-                os.environ['MACOSX_DEPLOYMENT_TARGET']='10.5'
-            extra_link_args.append('-Wl,-rpath,@loader_path/OpenMM')
-
+            extra_compile_args += ['-stdlib=libc++', '-mmacosx-version-min=10.7']                                                                                                                                       
+            extra_link_args += ['-stdlib=libc++', '-mmacosx-version-min=10.7', '-Wl', '-rpath', openmm_lib_path]                                                                                                          
 
     library_dirs=[openmm_lib_path]
     include_dirs=openmm_include_path.split(';')
@@ -209,6 +208,7 @@ def buildKeywordDictionary(major_version_num=MAJOR_VERSION_NUM,
                  include_dirs = include_dirs,
                  define_macros = define_macros,
                  library_dirs = library_dirs,
+                 runtime_library_dirs = library_dirs,
                  libraries = libraries,
                  extra_compile_args=extra_compile_args,
                  extra_link_args=extra_link_args,
@@ -238,8 +238,8 @@ def main():
         uninstall()
     except:
         pass
-    writeVersionPy()
     setupKeywords=buildKeywordDictionary()
+    writeVersionPy()
     setup(**setupKeywords)
 
 if __name__ == '__main__':

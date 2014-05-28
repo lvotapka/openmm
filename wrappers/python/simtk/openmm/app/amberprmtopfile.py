@@ -31,6 +31,7 @@ USE OR OTHER DEALINGS IN THE SOFTWARE.
 __author__ = "Peter Eastman"
 __version__ = "1.0"
 
+from math import sqrt
 from simtk.openmm.app import Topology
 from simtk.openmm.app import PDBFile
 from simtk.openmm.app.internal import amber_file_parser
@@ -61,6 +62,11 @@ class GBn(object):
         return 'GBn'
 GBn = GBn()
 
+class GBn2(object):
+    def __repr__(self):
+        return 'GBn2'
+GBn2 = GBn2()
+
 class AmberPrmtopFile(object):
     """AmberPrmtopFile parses an AMBER prmtop file and constructs a Topology and (optionally) an OpenMM System from it."""
 
@@ -69,6 +75,7 @@ class AmberPrmtopFile(object):
         top = Topology()
         ## The Topology read from the prmtop file
         self.topology = top
+        self.elements = []
 
         # Load the prmtop file
 
@@ -96,21 +103,32 @@ class AmberPrmtopFile(object):
             if atomName in atomReplacements:
                 atomName = atomReplacements[atomName]
 
-            # Try to guess the element.
-
-            upper = atomName.upper()
-            if upper.startswith('CL'):
-                element = elem.chlorine
-            elif upper.startswith('NA'):
-                element = elem.sodium
-            elif upper.startswith('MG'):
-                element = elem.magnesium
-            else:
+            # Get the element from the prmtop file if available
+            if prmtop.has_atomic_number:
                 try:
-                    element = elem.get_by_symbol(atomName[0])
+                    element = elem.Element.getByAtomicNumber(int(prmtop._raw_data['ATOMIC_NUMBER'][index]))
                 except KeyError:
                     element = None
+            else:
+                # Try to guess the element from the atom name.
+
+                upper = atomName.upper()
+                if upper.startswith('CL'):
+                    element = elem.chlorine
+                elif upper.startswith('NA'):
+                    element = elem.sodium
+                elif upper.startswith('MG'):
+                    element = elem.magnesium
+                elif upper.startswith('ZN'):
+                    element = elem.zinc
+                else:
+                    try:
+                        element = elem.get_by_symbol(atomName[0])
+                    except KeyError:
+                        element = None
+
             top.addAtom(atomName, element, r)
+            self.elements.append(element)
 
         # Add bonds to the topology
 
@@ -126,8 +144,11 @@ class AmberPrmtopFile(object):
             top.setUnitCellDimensions(tuple(x.value_in_unit(unit.nanometer) for x in prmtop.getBoxBetaAndDimensions()[1:4])*unit.nanometer)
 
     def createSystem(self, nonbondedMethod=ff.NoCutoff, nonbondedCutoff=1.0*unit.nanometer,
-                     constraints=None, rigidWater=True, implicitSolvent=None, soluteDielectric=1.0, solventDielectric=78.5, removeCMMotion=True,
-                     ewaldErrorTolerance=0.0005):
+                     constraints=None, rigidWater=True, implicitSolvent=None,
+                     implicitSolventSaltConc=0.0*(unit.moles/unit.liter),
+                     implicitSolventKappa=None, temperature=298.15*unit.kelvin,
+                     soluteDielectric=1.0, solventDielectric=78.5,
+                     removeCMMotion=True, hydrogenMass=None, ewaldErrorTolerance=0.0005):
         """Construct an OpenMM System representing the topology described by this prmtop file.
 
         Parameters:
@@ -137,10 +158,18 @@ class AmberPrmtopFile(object):
          - constraints (object=None) Specifies which bonds angles should be implemented with constraints.
            Allowed values are None, HBonds, AllBonds, or HAngles.
          - rigidWater (boolean=True) If true, water molecules will be fully rigid regardless of the value passed for the constraints argument
-         - implicitSolvent (object=None) If not None, the implicit solvent model to use.  Allowed values are HCT, OBC1, OBC2, or GBn.
+         - implicitSolvent (object=None) If not None, the implicit solvent model to use.  Allowed values are HCT, OBC1, OBC2, GBn, or GBn2.
+         - implicitSolventSaltConc (float=0.0*unit.moles/unit.liter) The salt concentration for GB 
+                    calculations (modelled as a debye screening parameter). It is converted to the debye length (kappa)
+                    using the provided temperature and solventDielectric
+         - temperature (float=300*kelvin) Temperature of the system. Only used to compute the Debye length from
+                    implicitSolventSoltConc
+         - implicitSolventKappa (float units of 1/length) If this value is set, implicitSolventSaltConc will be ignored.
          - soluteDielectric (float=1.0) The solute dielectric constant to use in the implicit solvent model.
          - solventDielectric (float=78.5) The solvent dielectric constant to use in the implicit solvent model.
          - removeCMMotion (boolean=True) If true, a CMMotionRemover will be added to the System
+         - hydrogenMass (mass=None) The mass to use for hydrogen atoms bound to heavy atoms.  Any mass added to a hydrogen is
+           subtracted from the heavy atom to keep their total mass the same.
          - ewaldErrorTolerance (float=0.0005) The error tolerance to use if nonbondedMethod is Ewald or PME.
         Returns: the newly created System
         """
@@ -165,19 +194,49 @@ class AmberPrmtopFile(object):
             raise ValueError('Illegal value for constraints')
         if implicitSolvent is None:
             implicitString = None
-        elif implicitSolvent == HCT:
+        elif implicitSolvent is HCT:
             implicitString = 'HCT'
-        elif implicitSolvent == OBC1:
+        elif implicitSolvent is OBC1:
             implicitString = 'OBC1'
-        elif implicitSolvent == OBC2:
+        elif implicitSolvent is OBC2:
             implicitString = 'OBC2'
-        elif implicitSolvent == GBn:
+        elif implicitSolvent is GBn:
             implicitString = 'GBn'
+        elif implicitSolvent is GBn2:
+            implicitString = 'GBn2'
         else:
             raise ValueError('Illegal value for implicit solvent model')
-        sys = amber_file_parser.readAmberSystem(prmtop_loader=self._prmtop, shake=constraintString, nonbondedCutoff=nonbondedCutoff,
-                                                 nonbondedMethod=methodMap[nonbondedMethod], flexibleConstraints=False, gbmodel=implicitString,
-                                                 soluteDielectric=soluteDielectric, solventDielectric=solventDielectric, rigidWater=rigidWater)
+        # If implicitSolventKappa is None, compute it from the salt concentration
+        if implicitSolvent is not None and implicitSolventKappa is None:
+            if unit.is_quantity(implicitSolventSaltConc):
+                implicitSolventSaltConc = implicitSolventSaltConc.value_in_unit(unit.moles/unit.liter)
+            if unit.is_quantity(temperature):
+                temperature = temperature.value_in_unit(unit.kelvin)
+            # The constant is 1 / sqrt( epsilon_0 * kB / (2 * NA * q^2 * 1000) )
+            # where NA is avogadro's number, epsilon_0 is the permittivity of
+            # free space, q is the elementary charge (this number matches
+            # Amber's kappa conversion factor)
+            implicitSolventKappa = 50.33355 * sqrt(implicitSolventSaltConc / solventDielectric / temperature)
+            # Multiply by 0.73 to account for ion exclusions, and multiply by 10
+            # to convert to 1/nm from 1/angstroms
+            implicitSolventKappa *= 7.3
+        elif implicitSolvent is None:
+            implicitSolventKappa = 0.0
+
+        sys = amber_file_parser.readAmberSystem(prmtop_loader=self._prmtop, shake=constraintString,
+                        nonbondedCutoff=nonbondedCutoff, nonbondedMethod=methodMap[nonbondedMethod],
+                        flexibleConstraints=False, gbmodel=implicitString, soluteDielectric=soluteDielectric,
+                        solventDielectric=solventDielectric, implicitSolventKappa=implicitSolventKappa,
+                        rigidWater=rigidWater, elements=self.elements)
+
+        if hydrogenMass is not None:
+            for atom1, atom2 in self.topology.bonds():
+                if atom1.element == elem.hydrogen:
+                    (atom1, atom2) = (atom2, atom1)
+                if atom2.element == elem.hydrogen and atom1.element not in (elem.hydrogen, None):
+                    transferMass = hydrogenMass-sys.getParticleMass(atom2.index)
+                    sys.setParticleMass(atom2.index, hydrogenMass)
+                    sys.setParticleMass(atom1.index, sys.getParticleMass(atom1.index)-transferMass)
         for force in sys.getForces():
             if isinstance(force, mm.NonbondedForce):
                 force.setEwaldErrorTolerance(ewaldErrorTolerance)

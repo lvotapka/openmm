@@ -1,20 +1,14 @@
 #---------------------------------------------------
 # OpenMM OpenCL Drude Integrator
 #
-# Creates OpenMM library, base name=OpenMMDrudeOpenCL.
-# Default libraries are shared & optimized. Variants
-# are created for debug (_d).
+# Creates OpenMMDrudeOpenCL library.
 #
 # Windows:
-#   OpenMMDrudeOpenCL[_d].dll
-#   OpenMMDrudeOpenCL[_d].lib
+#   OpenMMDrudeOpenCL.dll
+#   OpenMMDrudeOpenCL.lib
 # Unix:
-#   libOpenMMDrudeOpenCL[_d].so
+#   libOpenMMDrudeOpenCL.so
 #----------------------------------------------------
-
-IF (APPLE)
-    SET (CMAKE_OSX_DEPLOYMENT_TARGET "10.6")
-ENDIF (APPLE)
 
 # The source is organized into subdirectories, but we handle them all from
 # this CMakeLists file rather than letting CMake visit them as SUBDIRS.
@@ -27,19 +21,6 @@ SET(OPENMM_SOURCE_SUBDIRS .)
 SET(OPENMMDRUDEOPENCL_LIBRARY_NAME OpenMMDrudeOpenCL)
 
 SET(SHARED_TARGET ${OPENMMDRUDEOPENCL_LIBRARY_NAME})
-
-
-# Ensure that debug libraries have "_d" appended to their names.
-# CMake gets this right on Windows automatically with this definition.
-IF (${CMAKE_GENERATOR} MATCHES "Visual Studio")
-    SET(CMAKE_DEBUG_POSTFIX "_d" CACHE INTERNAL "" FORCE)
-ENDIF (${CMAKE_GENERATOR} MATCHES "Visual Studio")
-
-# But on Unix or Cygwin we have to add the suffix manually
-IF (UNIX AND CMAKE_BUILD_TYPE MATCHES Debug)
-    SET(SHARED_TARGET ${SHARED_TARGET}_d)
-ENDIF (UNIX AND CMAKE_BUILD_TYPE MATCHES Debug)
-
 
 # These are all the places to search for header files which are
 # to be part of the API.
@@ -105,24 +86,15 @@ ADD_CUSTOM_COMMAND(OUTPUT ${CL_KERNELS_CPP} ${CL_KERNELS_H}
 SET_SOURCE_FILES_PROPERTIES(${CL_KERNELS_CPP} ${CL_KERNELS_H} PROPERTIES GENERATED TRUE)
 ADD_LIBRARY(${SHARED_TARGET} SHARED ${SOURCE_FILES} ${SOURCE_INCLUDE_FILES} ${API_ABS_INCLUDE_FILES})
 
-IF (UNIX AND CMAKE_BUILD_TYPE MATCHES Debug)
-    SET(MAIN_OPENMM_LIB ${OPENMM_LIBRARY_NAME}_d)
-ELSE (UNIX AND CMAKE_BUILD_TYPE MATCHES Debug)
-    SET(MAIN_OPENMM_LIB ${OPENMM_LIBRARY_NAME})
-ENDIF (UNIX AND CMAKE_BUILD_TYPE MATCHES Debug)
-TARGET_LINK_LIBRARIES(${SHARED_TARGET} ${MAIN_OPENMM_LIB}  ${OPENCL_LIBRARIES} ${PTHREADS_LIB})
-TARGET_LINK_LIBRARIES(${SHARED_TARGET} debug ${OPENMM_LIBRARY_NAME}OpenCL_d optimized ${OPENMM_LIBRARY_NAME}OpenCL)
-TARGET_LINK_LIBRARIES(${SHARED_TARGET} debug ${SHARED_DRUDE_TARGET} optimized ${SHARED_DRUDE_TARGET})
-SET_TARGET_PROPERTIES(${SHARED_TARGET} PROPERTIES COMPILE_FLAGS "-msse2 -DOPENMM_BUILDING_SHARED_LIBRARY")
+TARGET_LINK_LIBRARIES(${SHARED_TARGET} ${OPENMM_LIBRARY_NAME}  ${OPENCL_LIBRARIES} ${PTHREADS_LIB})
+TARGET_LINK_LIBRARIES(${SHARED_TARGET} ${OPENMM_LIBRARY_NAME}OpenCL)
+TARGET_LINK_LIBRARIES(${SHARED_TARGET} ${SHARED_DRUDE_TARGET})
+SET_TARGET_PROPERTIES(${SHARED_TARGET} PROPERTIES LINK_FLAGS "${EXTRA_COMPILE_FLAGS}" COMPILE_FLAGS "${EXTRA_COMPILE_FLAGS} -DOPENMM_BUILDING_SHARED_LIBRARY")
 
 INSTALL(TARGETS ${SHARED_TARGET} DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/plugins)
 # Ensure that links to the main OpenCL library will be resolved.
 IF (APPLE)
-    IF (CMAKE_BUILD_TYPE MATCHES Debug)
-        SET(OPENCL_LIBRARY libOpenMMOpenCL_d.dylib)
-    ELSE (CMAKE_BUILD_TYPE MATCHES Debug)
-        SET(OPENCL_LIBRARY libOpenMMOpenCL.dylib)
-    ENDIF (CMAKE_BUILD_TYPE MATCHES Debug)
+    SET(OPENCL_LIBRARY libOpenMMOpenCL.dylib)
     INSTALL(CODE "EXECUTE_PROCESS(COMMAND install_name_tool -change ${OPENCL_LIBRARY} @loader_path/${OPENCL_LIBRARY} ${CMAKE_INSTALL_PREFIX}/lib/plugins/lib${SHARED_TARGET}.dylib)")
 ENDIF (APPLE)
 if(OPENMM_BUILD_OPENCL_TESTS)

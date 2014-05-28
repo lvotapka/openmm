@@ -9,7 +9,7 @@
  * Biological Structures at Stanford, funded under the NIH Roadmap for        *
  * Medical Research, grant U54 GM072970. See https://simtk.org.               *
  *                                                                            *
- * Portions copyright (c) 2008-2013 Stanford University and the Authors.      *
+ * Portions copyright (c) 2008-2014 Stanford University and the Authors.      *
  * Authors: Peter Eastman                                                     *
  * Contributors:                                                              *
  *                                                                            *
@@ -46,6 +46,9 @@ namespace OpenMM {
  * It simulates many copies of the System, with successive copies connected by harmonic
  * springs to form a ring.  This allows certain quantum mechanical effects to be efficiently
  * simulated.
+ * 
+ * By default this Integrator applies a PILE thermostat to the system to simulate constant
+ * temperature dynamics.  You can disable the thermostat by calling setApplyThermostat(false).
  * 
  * Because this Integrator simulates many copies of the System at once, it must be used
  * differently from other Integrators.  Instead of setting positions and velocities by
@@ -128,6 +131,18 @@ public:
         friction = coeff;
     }
     /**
+     * Get whether a thermostat is applied to the system.
+     */
+    bool getApplyThermostat() const {
+        return applyThermostat;
+    }
+    /**
+     * Set whether a thermostat is applied to the system.
+     */
+    void setApplyThermostat(bool apply) {
+        applyThermostat = apply;
+    }
+    /**
      * Get the random number seed.  See setRandomNumberSeed() for details.
      */
     int getRandomNumberSeed() const {
@@ -181,6 +196,11 @@ public:
      */
     State getState(int copy, int types, bool enforcePeriodicBox=false, int groups=0xFFFFFFFF);
     /**
+     * Get the total energy of the ring polymer.  This includes the potential and kinetic energies of all copies,
+     * plus the potential energy of the harmonic springs that link copies together.
+     */
+    double getTotalEnergy();
+    /**
      * Advance a simulation through time by taking a series of time steps.
      *
      * @param steps   the number of time steps to take
@@ -213,6 +233,7 @@ protected:
 private:
     double temperature, friction;
     int numCopies, randomNumberSeed;
+    bool applyThermostat;
     std::map<int, int> contractions;
     bool forcesAreValid, hasSetPosition, hasSetVelocity, isFirstStep;
     Kernel kernel;

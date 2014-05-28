@@ -39,13 +39,17 @@
 #include "openmm/State.h"
 #include "openmm/VirtualSite.h"
 #include "openmm/Context.h"
+#include <algorithm>
 #include <iostream>
 #include <map>
 #include <utility>
 #include <vector>
+#include <string.h>
 
 using namespace OpenMM;
 using namespace std;
+const static char CHECKPOINT_MAGIC_BYTES[] = "OpenMM Binary Checkpoint\n";
+
 
 ContextImpl::ContextImpl(Context& owner, const System& system, Integrator& integrator, Platform* platform, const map<string, string>& properties) :
         owner(owner), system(system), integrator(integrator), hasInitializedForces(false), hasSetPositions(false), integratorIsDeleted(false),
@@ -69,8 +73,24 @@ ContextImpl::ContextImpl(Context& owner, const System& system, Integrator& integ
         int particle1, particle2;
         double distance;
         system.getConstraintParameters(i, particle1, particle2, distance);
-        if (system.getParticleMass(particle1) == 0.0 || system.getParticleMass(particle2) == 0.0)
+        double mass1 = system.getParticleMass(particle1);
+        double mass2 = system.getParticleMass(particle2);
+        if ((mass1 == 0.0 && mass2 != 0.0) || (mass2 == 0.0 && mass1 != 0.0))
             throw OpenMMException("A constraint cannot involve a massless particle");
+    }
+    
+    // Validate the list of properties.
+
+    const vector<string>& platformProperties = platform->getPropertyNames();
+    for (map<string, string>::const_iterator iter = properties.begin(); iter != properties.end(); ++iter) {
+        bool valid = false;
+        for (int i = 0; i < (int) platformProperties.size(); i++)
+            if (platformProperties[i] == iter->first) {
+                valid = true;
+                break;
+            }
+        if (!valid)
+            throw OpenMMException("Illegal property name: "+iter->first);
     }
     
     // Find the list of kernels required.
@@ -78,6 +98,8 @@ ContextImpl::ContextImpl(Context& owner, const System& system, Integrator& integ
     vector<string> kernelNames;
     kernelNames.push_back(CalcForcesAndEnergyKernel::Name());
     kernelNames.push_back(UpdateStateDataKernel::Name());
+    kernelNames.push_back(ApplyConstraintsKernel::Name());
+    kernelNames.push_back(VirtualSitesKernel::Name());
     for (int i = 0; i < system.getNumForces(); ++i) {
         forceImpls.push_back(system.getForce(i).createImpl());
         map<string, double> forceParameters = forceImpls[forceImpls.size()-1]->getDefaultParameters();
@@ -88,14 +110,40 @@ ContextImpl::ContextImpl(Context& owner, const System& system, Integrator& integ
     hasInitializedForces = true;
     vector<string> integratorKernels = integrator.getKernelNames();
     kernelNames.insert(kernelNames.begin(), integratorKernels.begin(), integratorKernels.end());
-    if (platform == 0)
-        this->platform = platform = &Platform::findPlatform(kernelNames);
-    else if (!platform->supportsKernels(kernelNames))
-        throw OpenMMException("Specified a Platform for a Context which does not support all required kernels");
+    
+    // Select a platform to use.
+    
+    vector<pair<double, Platform*> > candidatePlatforms;
+    if (platform == NULL) {
+        for (int i = 0; i < Platform::getNumPlatforms(); i++) {
+            Platform& p = Platform::getPlatform(i);
+            if (p.supportsKernels(kernelNames))
+                candidatePlatforms.push_back(make_pair(p.getSpeed(), &p));
+        }
+        if (candidatePlatforms.size() == 0)
+            throw OpenMMException("No Platform supports all the requested kernels");
+        sort(candidatePlatforms.begin(), candidatePlatforms.end());
+    }
+    else {
+        if (!platform->supportsKernels(kernelNames))
+            throw OpenMMException("Specified a Platform for a Context which does not support all required kernels");
+        candidatePlatforms.push_back(make_pair(platform->getSpeed(), platform));
+    }
+    for (int i = candidatePlatforms.size()-1; i >= 0; i--) {
+        try {
+            this->platform = platform = candidatePlatforms[i].second;
+            platform->contextCreated(*this, properties);
+            break;
+        }
+        catch (...) {
+            if (i > 0)
+                continue;
+            throw;
+        }
+    }
     
     // Create and initialize kernels and other objects.
     
-    platform->contextCreated(*this, properties);
     initializeForcesKernel = platform->createKernel(CalcForcesAndEnergyKernel::Name(), *this);
     initializeForcesKernel.getAs<CalcForcesAndEnergyKernel>().initialize(system);
     updateStateDataKernel = platform->createKernel(UpdateStateDataKernel::Name(), *this);
@@ -353,6 +401,7 @@ static string readString(istream& stream) {
 }
 
 void ContextImpl::createCheckpoint(ostream& stream) {
+    stream.write(CHECKPOINT_MAGIC_BYTES, sizeof(CHECKPOINT_MAGIC_BYTES)/sizeof(CHECKPOINT_MAGIC_BYTES[0]));
     writeString(stream, getPlatform().getName());
     int numParticles = getSystem().getNumParticles();
     stream.write((char*) &numParticles, sizeof(int));
@@ -367,6 +416,12 @@ void ContextImpl::createCheckpoint(ostream& stream) {
 }
 
 void ContextImpl::loadCheckpoint(istream& stream) {
+    static const int magiclength = sizeof(CHECKPOINT_MAGIC_BYTES)/sizeof(CHECKPOINT_MAGIC_BYTES[0]);
+    char magicbytes[magiclength];
+    stream.read(magicbytes, magiclength);
+    if (memcmp(magicbytes, CHECKPOINT_MAGIC_BYTES, magiclength) != 0)
+        throw OpenMMException("loadCheckpoint: Checkpoint header was not correct");
+
     string platformName = readString(stream);
     if (platformName != getPlatform().getName())
         throw OpenMMException("loadCheckpoint: Checkpoint was created with a different Platform: "+platformName);

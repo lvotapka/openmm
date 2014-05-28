@@ -67,7 +67,7 @@ __kernel void computeBornSum(
                 if (atom1 < NUM_ATOMS && y*TILE_SIZE+j < NUM_ATOMS) {
 #endif
                     real invR = RSQRT(r2);
-                    real r = RECIP(invR);
+                    real r = r2*invR;
                     float2 params2 = (float2) (localData[tbx+j].radius, localData[tbx+j].scaledRadius);
                     real rScaledRadiusJ = r+params2.y;
                     if ((j != tgx) && (params1.x < rScaledRadiusJ)) {
@@ -114,7 +114,7 @@ __kernel void computeBornSum(
                 if (atom1 < NUM_ATOMS && y*TILE_SIZE+tj < NUM_ATOMS) {
 #endif
                     real invR = RSQRT(r2);
-                    real r = RECIP(invR);
+                    real r = r2*invR;
                     float2 params2 = (float2) (localData[tbx+tj].radius, localData[tbx+tj].scaledRadius);
                     real rScaledRadiusJ = r+params2.y;
                     if (params1.x < rScaledRadiusJ) {
@@ -268,7 +268,7 @@ __kernel void computeBornSum(
                     int atom2 = atomIndices[tbx+tj];
                     if (atom1 < NUM_ATOMS && atom2 < NUM_ATOMS && r2 < CUTOFF_SQUARED) {
                         real invR = RSQRT(r2);
-                        real r = RECIP(invR);
+                        real r = r2*invR;
                         float2 params2 = (float2) (localData[tbx+tj].radius, localData[tbx+tj].scaledRadius);
                         real rScaledRadiusJ = r+params2.y;
                         if (params1.x < rScaledRadiusJ) {
@@ -317,7 +317,7 @@ __kernel void computeBornSum(
                     if (atom1 < NUM_ATOMS && atom2 < NUM_ATOMS) {
 #endif
                         real invR = RSQRT(r2);
-                        real r = RECIP(invR);
+                        real r = r2*invR;
                         float2 params2 = (float2) (localData[tbx+tj].radius, localData[tbx+tj].scaledRadius);
                         real rScaledRadiusJ = r+params2.y;
                         if (params1.x < rScaledRadiusJ) {
@@ -437,18 +437,23 @@ __kernel void computeGBSAForce1(
                     if (r2 < CUTOFF_SQUARED) {
 #endif
                         real invR = RSQRT(r2);
-                        real r = RECIP(invR);
+                        real r = r2*invR;
                         real bornRadius2 = localData[tbx+j].bornRadius;
                         real alpha2_ij = bornRadius1*bornRadius2;
                         real D_ij = r2*RECIP(4.0f*alpha2_ij);
                         real expTerm = EXP(-D_ij);
                         real denominator2 = r2 + alpha2_ij*expTerm;
                         real denominator = SQRT(denominator2);
-                        real tempEnergy = (PREFACTOR*posq1.w*posq2.w)*RECIP(denominator);
+                        real scaledChargeProduct = PREFACTOR*posq1.w*posq2.w;
+                        real tempEnergy = scaledChargeProduct*RECIP(denominator);
                         real Gpol = tempEnergy*RECIP(denominator2);
                         real dGpol_dalpha2_ij = -0.5f*Gpol*expTerm*(1.0f+D_ij);
                         real dEdR = Gpol*(1.0f - 0.25f*expTerm);
                         force.w += dGpol_dalpha2_ij*bornRadius2;
+#ifdef USE_CUTOFF
+                        if (atom1 != y*TILE_SIZE+j)
+                            tempEnergy -= scaledChargeProduct/CUTOFF;
+#endif
                         energy += 0.5f*tempEnergy;
                         delta.xyz *= dEdR;
                         force.xyz -= delta.xyz;
@@ -487,18 +492,22 @@ __kernel void computeGBSAForce1(
                     if (r2 < CUTOFF_SQUARED) {
 #endif
                         real invR = RSQRT(r2);
-                        real r = RECIP(invR);
+                        real r = r2*invR;
                         real bornRadius2 = localData[tbx+tj].bornRadius;
                         real alpha2_ij = bornRadius1*bornRadius2;
                         real D_ij = r2*RECIP(4.0f*alpha2_ij);
                         real expTerm = EXP(-D_ij);
                         real denominator2 = r2 + alpha2_ij*expTerm;
                         real denominator = SQRT(denominator2);
-                        real tempEnergy = (PREFACTOR*posq1.w*posq2.w)*RECIP(denominator);
+                        real scaledChargeProduct = PREFACTOR*posq1.w*posq2.w;
+                        real tempEnergy = scaledChargeProduct*RECIP(denominator);
                         real Gpol = tempEnergy*RECIP(denominator2);
                         real dGpol_dalpha2_ij = -0.5f*Gpol*expTerm*(1.0f+D_ij);
                         real dEdR = Gpol*(1.0f - 0.25f*expTerm);
                         force.w += dGpol_dalpha2_ij*bornRadius2;
+#ifdef USE_CUTOFF
+                        tempEnergy -= scaledChargeProduct/CUTOFF;
+#endif
                         energy += tempEnergy;
                         delta.xyz *= dEdR;
                         force.xyz -= delta.xyz;
@@ -650,18 +659,22 @@ __kernel void computeGBSAForce1(
                         real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
                         if (r2 < CUTOFF_SQUARED) {
                             real invR = RSQRT(r2);
-                            real r = RECIP(invR);
+                            real r = r2*invR;
                             real bornRadius2 = localData[tbx+tj].bornRadius;
                             real alpha2_ij = bornRadius1*bornRadius2;
                             real D_ij = r2*RECIP(4.0f*alpha2_ij);
                             real expTerm = EXP(-D_ij);
                             real denominator2 = r2 + alpha2_ij*expTerm;
                             real denominator = SQRT(denominator2);
-                            real tempEnergy = (PREFACTOR*posq1.w*posq2.w)*RECIP(denominator);
+                            real scaledChargeProduct = PREFACTOR*posq1.w*posq2.w;
+                            real tempEnergy = scaledChargeProduct*RECIP(denominator);
                             real Gpol = tempEnergy*RECIP(denominator2);
                             real dGpol_dalpha2_ij = -0.5f*Gpol*expTerm*(1.0f+D_ij);
                             real dEdR = Gpol*(1.0f - 0.25f*expTerm);
                             force.w += dGpol_dalpha2_ij*bornRadius2;
+#ifdef USE_CUTOFF
+                            tempEnergy -= scaledChargeProduct/CUTOFF;
+#endif
                             energy += tempEnergy;
                             delta.xyz *= dEdR;
                             force.xyz -= delta.xyz;
@@ -694,18 +707,22 @@ __kernel void computeGBSAForce1(
                         if (r2 < CUTOFF_SQUARED) {
 #endif
                             real invR = RSQRT(r2);
-                            real r = RECIP(invR);
+                            real r = r2*invR;
                             real bornRadius2 = localData[tbx+tj].bornRadius;
                             real alpha2_ij = bornRadius1*bornRadius2;
                             real D_ij = r2*RECIP(4.0f*alpha2_ij);
                             real expTerm = EXP(-D_ij);
                             real denominator2 = r2 + alpha2_ij*expTerm;
                             real denominator = SQRT(denominator2);
-                            real tempEnergy = (PREFACTOR*posq1.w*posq2.w)*RECIP(denominator);
+                            real scaledChargeProduct = PREFACTOR*posq1.w*posq2.w;
+                            real tempEnergy = scaledChargeProduct*RECIP(denominator);
                             real Gpol = tempEnergy*RECIP(denominator2);
                             real dGpol_dalpha2_ij = -0.5f*Gpol*expTerm*(1.0f+D_ij);
                             real dEdR = Gpol*(1.0f - 0.25f*expTerm);
                             force.w += dGpol_dalpha2_ij*bornRadius2;
+#ifdef USE_CUTOFF
+                            tempEnergy -= scaledChargeProduct/CUTOFF;
+#endif
                             energy += tempEnergy;
                             delta.xyz *= dEdR;
                             force.xyz -= delta.xyz;

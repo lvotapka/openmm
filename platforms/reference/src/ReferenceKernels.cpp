@@ -38,6 +38,7 @@
 #include "ReferenceBrownianDynamics.h"
 #include "ReferenceCCMAAlgorithm.h"
 #include "ReferenceCMAPTorsionIxn.h"
+#include "ReferenceConstraints.h"
 #include "ReferenceCustomAngleIxn.h"
 #include "ReferenceCustomBondIxn.h"
 #include "ReferenceCustomCompoundBondIxn.h"
@@ -54,6 +55,7 @@
 #include "ReferenceProperDihedralBond.h"
 #include "ReferenceRbDihedralBond.h"
 #include "ReferenceStochasticDynamics.h"
+#include "ReferenceTabulatedFunction.h"
 #include "ReferenceVariableStochasticDynamics.h"
 #include "ReferenceVariableVerletDynamics.h"
 #include "ReferenceVerletDynamics.h"
@@ -68,7 +70,6 @@
 #include "openmm/internal/CustomNonbondedForceImpl.h"
 #include "openmm/internal/CMAPTorsionForceImpl.h"
 #include "openmm/internal/NonbondedForceImpl.h"
-#include "openmm/internal/SplineFitter.h"
 #include "openmm/Integrator.h"
 #include "openmm/OpenMMException.h"
 #include "SimTKOpenMMUtilities.h"
@@ -132,25 +133,16 @@ static RealVec& extractBoxSize(ContextImpl& context) {
     return *(RealVec*) data->periodicBoxSize;
 }
 
-static void findAnglesForCCMA(const System& system, vector<ReferenceCCMAAlgorithm::AngleInfo>& angles) {
-    for (int i = 0; i < system.getNumForces(); i++) {
-        const HarmonicAngleForce* force = dynamic_cast<const HarmonicAngleForce*>(&system.getForce(i));
-        if (force != NULL) {
-            for (int j = 0; j < force->getNumAngles(); j++) {
-                int atom1, atom2, atom3;
-                double angle, k;
-                force->getAngleParameters(j, atom1, atom2, atom3, angle, k);
-                angles.push_back(ReferenceCCMAAlgorithm::AngleInfo(atom1, atom2, atom3, (RealOpenMM)angle));
-            }
-        }
-    }
+static ReferenceConstraints& extractConstraints(ContextImpl& context) {
+    ReferencePlatform::PlatformData* data = reinterpret_cast<ReferencePlatform::PlatformData*>(context.getPlatformData());
+    return *(ReferenceConstraints*) data->constraints;
 }
 
 /**
  * Compute the kinetic energy of the system, possibly shifting the velocities in time to account
  * for a leapfrog integrator.
  */
-static double computeShiftedKineticEnergy(ContextImpl& context, vector<double>& masses, double timeShift, ReferenceConstraintAlgorithm* constraints) {
+static double computeShiftedKineticEnergy(ContextImpl& context, vector<double>& masses, double timeShift) {
     vector<RealVec>& posData = extractPositions(context);
     vector<RealVec>& velData = extractVelocities(context);
     vector<RealVec>& forceData = extractForces(context);
@@ -168,13 +160,10 @@ static double computeShiftedKineticEnergy(ContextImpl& context, vector<double>& 
     
     // Apply constraints to them.
     
-    if (constraints != NULL) {
-        vector<double> inverseMasses(numParticles);
-        for (int i = 0; i < numParticles; i++)
-            inverseMasses[i] = (masses[i] == 0 ? 0 : 1/masses[i]);
-        constraints->setTolerance(1e-4);
-        constraints->applyToVelocities(numParticles, posData, shiftedVel, inverseMasses);
-    }
+    vector<double> inverseMasses(numParticles);
+    for (int i = 0; i < numParticles; i++)
+        inverseMasses[i] = (masses[i] == 0 ? 0 : 1/masses[i]);
+    extractConstraints(context).applyToVelocities(posData, shiftedVel, inverseMasses, 1e-4);
     
     // Compute the kinetic energy.
     
@@ -315,46 +304,21 @@ void ReferenceApplyConstraintsKernel::initialize(const System& system) {
         masses[i] = static_cast<RealOpenMM>(system.getParticleMass(i));
         inverseMasses[i] = 1.0/masses[i];
     }
-    numConstraints = system.getNumConstraints();
-    constraintIndices.resize(numConstraints);
-    constraintDistances.resize(numConstraints);
-    for (int i = 0; i < numConstraints; ++i) {
-        int particle1, particle2;
-        double distance;
-        system.getConstraintParameters(i, particle1, particle2, distance);
-        constraintIndices[i].first = particle1;
-        constraintIndices[i].second = particle2;
-        constraintDistances[i] = static_cast<RealOpenMM>(distance);
-    }
 }
 
 ReferenceApplyConstraintsKernel::~ReferenceApplyConstraintsKernel() {
-    if (constraints)
-        delete constraints;
 }
 
 void ReferenceApplyConstraintsKernel::apply(ContextImpl& context, double tol) {
-    if (constraints == NULL) {
-        vector<ReferenceCCMAAlgorithm::AngleInfo> angles;
-        findAnglesForCCMA(context.getSystem(), angles);
-        constraints = new ReferenceCCMAAlgorithm(context.getSystem().getNumParticles(), numConstraints, constraintIndices, constraintDistances, masses, angles, tol);
-    }
     vector<RealVec>& positions = extractPositions(context);
-    constraints->setTolerance(tol);
-    constraints->apply(data.numParticles, positions, positions, inverseMasses);
+    extractConstraints(context).apply(positions, positions, inverseMasses, tol);
     ReferenceVirtualSites::computePositions(context.getSystem(), positions);
 }
 
 void ReferenceApplyConstraintsKernel::applyToVelocities(ContextImpl& context, double tol) {
-    if (constraints == NULL) {
-        vector<ReferenceCCMAAlgorithm::AngleInfo> angles;
-        findAnglesForCCMA(context.getSystem(), angles);
-        constraints = new ReferenceCCMAAlgorithm(context.getSystem().getNumParticles(), numConstraints, constraintIndices, constraintDistances, masses, angles, tol);
-    }
     vector<RealVec>& positions = extractPositions(context);
     vector<RealVec>& velocities = extractVelocities(context);
-    constraints->setTolerance(tol);
-    constraints->applyToVelocities(data.numParticles, positions, velocities, inverseMasses);
+    extractConstraints(context).applyToVelocities(positions, velocities, inverseMasses, tol);
 }
 
 void ReferenceVirtualSitesKernel::initialize(const System& system) {
@@ -440,8 +404,8 @@ void ReferenceCalcCustomBondForceKernel::initialize(const System& system, const 
     // Parse the expression used to calculate the force.
 
     Lepton::ParsedExpression expression = Lepton::Parser::parse(force.getEnergyFunction()).optimize();
-    energyExpression = expression.createProgram();
-    forceExpression = expression.differentiate("r").optimize().createProgram();
+    energyExpression = expression.createCompiledExpression();
+    forceExpression = expression.differentiate("r").createCompiledExpression();
     for (int i = 0; i < numParameters; i++)
         parameterNames.push_back(force.getPerBondParameterName(i));
     for (int i = 0; i < force.getNumGlobalParameters(); i++)
@@ -554,8 +518,8 @@ void ReferenceCalcCustomAngleForceKernel::initialize(const System& system, const
     // Parse the expression used to calculate the force.
 
     Lepton::ParsedExpression expression = Lepton::Parser::parse(force.getEnergyFunction()).optimize();
-    energyExpression = expression.createProgram();
-    forceExpression = expression.differentiate("theta").optimize().createProgram();
+    energyExpression = expression.createCompiledExpression();
+    forceExpression = expression.differentiate("theta").createCompiledExpression();
     for (int i = 0; i < numParameters; i++)
         parameterNames.push_back(force.getPerAngleParameterName(i));
     for (int i = 0; i < force.getNumGlobalParameters(); i++)
@@ -764,8 +728,8 @@ void ReferenceCalcCustomTorsionForceKernel::initialize(const System& system, con
     // Parse the expression used to calculate the force.
 
     Lepton::ParsedExpression expression = Lepton::Parser::parse(force.getEnergyFunction()).optimize();
-    energyExpression = expression.createProgram();
-    forceExpression = expression.differentiate("theta").optimize().createProgram();
+    energyExpression = expression.createCompiledExpression();
+    forceExpression = expression.differentiate("theta").createCompiledExpression();
     for (int i = 0; i < numParameters; i++)
         parameterNames.push_back(force.getPerTorsionParameterName(i));
     for (int i = 0; i < force.getNumGlobalParameters(); i++)
@@ -959,38 +923,6 @@ void ReferenceCalcNonbondedForceKernel::copyParametersToContext(ContextImpl& con
         dispersionCoefficient = NonbondedForceImpl::calcDispersionCorrection(context.getSystem(), force);
 }
 
-class ReferenceTabulatedFunction : public Lepton::CustomFunction {
-public:
-    ReferenceTabulatedFunction(double min, double max, const vector<double>& values) :
-            min(min), max(max), values(values) {
-        int numValues = values.size();
-        x.resize(numValues);
-        for (int i = 0; i < numValues; i++)
-            x[i] = min+i*(max-min)/(numValues-1);
-        SplineFitter::createNaturalSpline(x, values, derivs);
-    }
-    int getNumArguments() const {
-        return 1;
-    }
-    double evaluate(const double* arguments) const {
-        double t = arguments[0];
-        if (t < min || t > max)
-            return 0.0;
-        return SplineFitter::evaluateSpline(x, values, derivs, t);
-    }
-    double evaluateDerivative(const double* arguments, const int* derivOrder) const {
-        double t = arguments[0];
-        if (t < min || t > max)
-            return 0.0;
-        return SplineFitter::evaluateSplineDerivative(x, values, derivs, t);
-    }
-    CustomFunction* clone() const {
-        return new ReferenceTabulatedFunction(min, max, values);
-    }
-    double min, max;
-    vector<double> x, values, derivs;
-};
-
 ReferenceCalcCustomNonbondedForceKernel::~ReferenceCalcCustomNonbondedForceKernel() {
     disposeRealArray(particleParamArray, numParticles);
     if (neighborList != NULL)
@@ -1037,19 +969,14 @@ void ReferenceCalcCustomNonbondedForceKernel::initialize(const System& system, c
     // Create custom functions for the tabulated functions.
 
     map<string, Lepton::CustomFunction*> functions;
-    for (int i = 0; i < force.getNumFunctions(); i++) {
-        string name;
-        vector<double> values;
-        double min, max;
-        force.getFunctionParameters(i, name, values, min, max);
-        functions[name] = new ReferenceTabulatedFunction(min, max, values);
-    }
+    for (int i = 0; i < force.getNumFunctions(); i++)
+        functions[force.getTabulatedFunctionName(i)] = createReferenceTabulatedFunction(force.getTabulatedFunction(i));
 
     // Parse the various expressions used to calculate the force.
 
     Lepton::ParsedExpression expression = Lepton::Parser::parse(force.getEnergyFunction(), functions).optimize();
-    energyExpression = expression.createProgram();
-    forceExpression = expression.differentiate("r").optimize().createProgram();
+    energyExpression = expression.createCompiledExpression();
+    forceExpression = expression.differentiate("r").createCompiledExpression();
     for (int i = 0; i < numParameters; i++)
         parameterNames.push_back(force.getPerParticleParameterName(i));
     for (int i = 0; i < force.getNumGlobalParameters(); i++) {
@@ -1324,13 +1251,8 @@ void ReferenceCalcCustomGBForceKernel::initialize(const System& system, const Cu
     // Create custom functions for the tabulated functions.
 
     map<string, Lepton::CustomFunction*> functions;
-    for (int i = 0; i < force.getNumFunctions(); i++) {
-        string name;
-        vector<double> values;
-        double min, max;
-        force.getFunctionParameters(i, name, values, min, max);
-        functions[name] = new ReferenceTabulatedFunction(min, max, values);
-    }
+    for (int i = 0; i < force.getNumFunctions(); i++)
+        functions[force.getTabulatedFunctionName(i)] = createReferenceTabulatedFunction(force.getTabulatedFunction(i));
 
     // Parse the expressions for computed values.
 
@@ -1446,10 +1368,10 @@ void ReferenceCalcCustomExternalForceKernel::initialize(const System& system, co
     // Parse the expression used to calculate the force.
 
     Lepton::ParsedExpression expression = Lepton::Parser::parse(force.getEnergyFunction()).optimize();
-    energyExpression = expression.createProgram();
-    forceExpressionX = expression.differentiate("x").optimize().createProgram();
-    forceExpressionY = expression.differentiate("y").optimize().createProgram();
-    forceExpressionZ = expression.differentiate("z").optimize().createProgram();
+    energyExpression = expression.createCompiledExpression();
+    forceExpressionX = expression.differentiate("x").createCompiledExpression();
+    forceExpressionY = expression.differentiate("y").createCompiledExpression();
+    forceExpressionZ = expression.differentiate("z").createCompiledExpression();
     for (int i = 0; i < numParameters; i++)
         parameterNames.push_back(force.getPerParticleParameterName(i));
     for (int i = 0; i < force.getNumGlobalParameters(); i++)
@@ -1543,13 +1465,8 @@ void ReferenceCalcCustomHbondForceKernel::initialize(const System& system, const
     // Create custom functions for the tabulated functions.
 
     map<string, Lepton::CustomFunction*> functions;
-    for (int i = 0; i < force.getNumFunctions(); i++) {
-        string name;
-        vector<double> values;
-        double min, max;
-        force.getFunctionParameters(i, name, values, min, max);
-        functions[name] = new ReferenceTabulatedFunction(min, max, values);
-    }
+    for (int i = 0; i < force.getNumFunctions(); i++)
+        functions[force.getTabulatedFunctionName(i)] = createReferenceTabulatedFunction(force.getTabulatedFunction(i));
 
     // Parse the expression and create the object used to calculate the interaction.
 
@@ -1645,13 +1562,8 @@ void ReferenceCalcCustomCompoundBondForceKernel::initialize(const System& system
     // Create custom functions for the tabulated functions.
 
     map<string, Lepton::CustomFunction*> functions;
-    for (int i = 0; i < force.getNumFunctions(); i++) {
-        string name;
-        vector<double> values;
-        double min, max;
-        force.getFunctionParameters(i, name, values, min, max);
-        functions[name] = new ReferenceTabulatedFunction(min, max, values);
-    }
+    for (int i = 0; i < force.getNumFunctions(); i++)
+        functions[force.getTabulatedFunctionName(i)] = createReferenceTabulatedFunction(force.getTabulatedFunction(i));
 
     // Parse the expression and create the object used to calculate the interaction.
 
@@ -1706,8 +1618,6 @@ void ReferenceCalcCustomCompoundBondForceKernel::copyParametersToContext(Context
 ReferenceIntegrateVerletStepKernel::~ReferenceIntegrateVerletStepKernel() {
     if (dynamics)
         delete dynamics;
-    if (constraints)
-        delete constraints;
 }
 
 void ReferenceIntegrateVerletStepKernel::initialize(const System& system, const VerletIntegrator& integrator) {
@@ -1715,20 +1625,6 @@ void ReferenceIntegrateVerletStepKernel::initialize(const System& system, const 
     masses.resize(numParticles);
     for (int i = 0; i < numParticles; ++i)
         masses[i] = static_cast<RealOpenMM>(system.getParticleMass(i));
-    numConstraints = system.getNumConstraints();
-    vector<pair<int, int> > constraintIndices(numConstraints);
-    vector<RealOpenMM> constraintDistances(numConstraints);
-    for (int i = 0; i < numConstraints; ++i) {
-        int particle1, particle2;
-        double distance;
-        system.getConstraintParameters(i, particle1, particle2, distance);
-        constraintIndices[i].first = particle1;
-        constraintIndices[i].second = particle2;
-        constraintDistances[i] = static_cast<RealOpenMM>(distance);
-    }
-    vector<ReferenceCCMAAlgorithm::AngleInfo> angles;
-    findAnglesForCCMA(system, angles);
-    constraints = new ReferenceCCMAAlgorithm(system.getNumParticles(), numConstraints, constraintIndices, constraintDistances, masses, angles, (RealOpenMM)integrator.getConstraintTolerance());
 }
 
 void ReferenceIntegrateVerletStepKernel::execute(ContextImpl& context, const VerletIntegrator& integrator) {
@@ -1742,24 +1638,21 @@ void ReferenceIntegrateVerletStepKernel::execute(ContextImpl& context, const Ver
         if (dynamics)
             delete dynamics;
         dynamics = new ReferenceVerletDynamics(context.getSystem().getNumParticles(), static_cast<RealOpenMM>(stepSize) );
-        dynamics->setReferenceConstraintAlgorithm(constraints);
+        dynamics->setReferenceConstraintAlgorithm(&extractConstraints(context));
         prevStepSize = stepSize;
     }
-    constraints->setTolerance(integrator.getConstraintTolerance());
-    dynamics->update(context.getSystem(), posData, velData, forceData, masses);
+    dynamics->update(context.getSystem(), posData, velData, forceData, masses, integrator.getConstraintTolerance());
     data.time += stepSize;
     data.stepCount++;
 }
 
 double ReferenceIntegrateVerletStepKernel::computeKineticEnergy(ContextImpl& context, const VerletIntegrator& integrator) {
-    return computeShiftedKineticEnergy(context, masses, 0.5*integrator.getStepSize(), constraints);
+    return computeShiftedKineticEnergy(context, masses, 0.5*integrator.getStepSize());
 }
 
 ReferenceIntegrateLangevinStepKernel::~ReferenceIntegrateLangevinStepKernel() {
     if (dynamics)
         delete dynamics;
-    if (constraints)
-        delete constraints;
 }
 
 void ReferenceIntegrateLangevinStepKernel::initialize(const System& system, const LangevinIntegrator& integrator) {
@@ -1767,21 +1660,7 @@ void ReferenceIntegrateLangevinStepKernel::initialize(const System& system, cons
     masses.resize(numParticles);
     for (int i = 0; i < numParticles; ++i)
         masses[i] = static_cast<RealOpenMM>(system.getParticleMass(i));
-    numConstraints = system.getNumConstraints();
-    vector<pair<int, int> > constraintIndices(numConstraints);
-    vector<RealOpenMM> constraintDistances(numConstraints);
-    for (int i = 0; i < numConstraints; ++i) {
-        int particle1, particle2;
-        double distance;
-        system.getConstraintParameters(i, particle1, particle2, distance);
-        constraintIndices[i].first = particle1;
-        constraintIndices[i].second = particle2;
-        constraintDistances[i] = static_cast<RealOpenMM>(distance);
-    }
     SimTKOpenMMUtilities::setRandomNumberSeed((unsigned int) integrator.getRandomNumberSeed());
-    vector<ReferenceCCMAAlgorithm::AngleInfo> angles;
-    findAnglesForCCMA(system, angles);
-    constraints = new ReferenceCCMAAlgorithm(system.getNumParticles(), numConstraints, constraintIndices, constraintDistances, masses, angles, (RealOpenMM)integrator.getConstraintTolerance());
 }
 
 void ReferenceIntegrateLangevinStepKernel::execute(ContextImpl& context, const LangevinIntegrator& integrator) {
@@ -1802,26 +1681,23 @@ void ReferenceIntegrateLangevinStepKernel::execute(ContextImpl& context, const L
                 static_cast<RealOpenMM>(stepSize), 
                 static_cast<RealOpenMM>(tau), 
                 static_cast<RealOpenMM>(temperature) );
-        dynamics->setReferenceConstraintAlgorithm(constraints);
+        dynamics->setReferenceConstraintAlgorithm(&extractConstraints(context));
         prevTemp = temperature;
         prevFriction = friction;
         prevStepSize = stepSize;
     }
-    constraints->setTolerance(integrator.getConstraintTolerance());
-    dynamics->update(context.getSystem(), posData, velData, forceData, masses);
+    dynamics->update(context.getSystem(), posData, velData, forceData, masses, integrator.getConstraintTolerance());
     data.time += stepSize;
     data.stepCount++;
 }
 
 double ReferenceIntegrateLangevinStepKernel::computeKineticEnergy(ContextImpl& context, const LangevinIntegrator& integrator) {
-    return computeShiftedKineticEnergy(context, masses, 0.5*integrator.getStepSize(), constraints);
+    return computeShiftedKineticEnergy(context, masses, 0.5*integrator.getStepSize());
 }
 
 ReferenceIntegrateBrownianStepKernel::~ReferenceIntegrateBrownianStepKernel() {
     if (dynamics)
         delete dynamics;
-    if (constraints)
-        delete constraints;
 }
 
 void ReferenceIntegrateBrownianStepKernel::initialize(const System& system, const BrownianIntegrator& integrator) {
@@ -1829,21 +1705,7 @@ void ReferenceIntegrateBrownianStepKernel::initialize(const System& system, cons
     masses.resize(numParticles);
     for (int i = 0; i < numParticles; ++i)
         masses[i] = static_cast<RealOpenMM>(system.getParticleMass(i));
-    numConstraints = system.getNumConstraints();
-    vector<pair<int, int> > constraintIndices(numConstraints);
-    vector<RealOpenMM> constraintDistances(numConstraints);
-    for (int i = 0; i < numConstraints; ++i) {
-        int particle1, particle2;
-        double distance;
-        system.getConstraintParameters(i, particle1, particle2, distance);
-        constraintIndices[i].first = particle1;
-        constraintIndices[i].second = particle2;
-        constraintDistances[i] = static_cast<RealOpenMM>(distance);
-    }
     SimTKOpenMMUtilities::setRandomNumberSeed((unsigned int) integrator.getRandomNumberSeed());
-    vector<ReferenceCCMAAlgorithm::AngleInfo> angles;
-    findAnglesForCCMA(system, angles);
-    constraints = new ReferenceCCMAAlgorithm(system.getNumParticles(), numConstraints, constraintIndices, constraintDistances, masses, angles, (RealOpenMM)integrator.getConstraintTolerance());
 }
 
 void ReferenceIntegrateBrownianStepKernel::execute(ContextImpl& context, const BrownianIntegrator& integrator) {
@@ -1863,26 +1725,23 @@ void ReferenceIntegrateBrownianStepKernel::execute(ContextImpl& context, const B
                 static_cast<RealOpenMM>(stepSize), 
                 static_cast<RealOpenMM>(friction), 
                 static_cast<RealOpenMM>(temperature) );
-        dynamics->setReferenceConstraintAlgorithm(constraints);
+        dynamics->setReferenceConstraintAlgorithm(&extractConstraints(context));
         prevTemp = temperature;
         prevFriction = friction;
         prevStepSize = stepSize;
     }
-    constraints->setTolerance(integrator.getConstraintTolerance());
-    dynamics->update(context.getSystem(), posData, velData, forceData, masses);
+    dynamics->update(context.getSystem(), posData, velData, forceData, masses, integrator.getConstraintTolerance());
     data.time += stepSize;
     data.stepCount++;
 }
 
 double ReferenceIntegrateBrownianStepKernel::computeKineticEnergy(ContextImpl& context, const BrownianIntegrator& integrator) {
-    return computeShiftedKineticEnergy(context, masses, 0, constraints);
+    return computeShiftedKineticEnergy(context, masses, 0);
 }
 
 ReferenceIntegrateVariableLangevinStepKernel::~ReferenceIntegrateVariableLangevinStepKernel() {
     if (dynamics)
         delete dynamics;
-    if (constraints)
-        delete constraints;
 }
 
 void ReferenceIntegrateVariableLangevinStepKernel::initialize(const System& system, const VariableLangevinIntegrator& integrator) {
@@ -1890,21 +1749,7 @@ void ReferenceIntegrateVariableLangevinStepKernel::initialize(const System& syst
     masses.resize(numParticles);
     for (int i = 0; i < numParticles; ++i)
         masses[i] = static_cast<RealOpenMM>(system.getParticleMass(i));
-    numConstraints = system.getNumConstraints();
-    vector<pair<int, int> > constraintIndices(numConstraints);
-    vector<RealOpenMM> constraintDistances(numConstraints);
-    for (int i = 0; i < numConstraints; ++i) {
-        int particle1, particle2;
-        double distance;
-        system.getConstraintParameters(i, particle1, particle2, distance);
-        constraintIndices[i].first = particle1;
-        constraintIndices[i].second = particle2;
-        constraintDistances[i] = static_cast<RealOpenMM>(distance);
-    }
     SimTKOpenMMUtilities::setRandomNumberSeed((unsigned int) integrator.getRandomNumberSeed());
-    vector<ReferenceCCMAAlgorithm::AngleInfo> angles;
-    findAnglesForCCMA(system, angles);
-    constraints = new ReferenceCCMAAlgorithm(system.getNumParticles(), numConstraints, constraintIndices, constraintDistances, masses, angles, (RealOpenMM)integrator.getConstraintTolerance());
 }
 
 double ReferenceIntegrateVariableLangevinStepKernel::execute(ContextImpl& context, const VariableLangevinIntegrator& integrator, double maxTime) {
@@ -1921,14 +1766,13 @@ double ReferenceIntegrateVariableLangevinStepKernel::execute(ContextImpl& contex
             delete dynamics;
         RealOpenMM tau = static_cast<RealOpenMM>( friction == 0.0 ? 0.0 : 1.0/friction );
         dynamics = new ReferenceVariableStochasticDynamics(context.getSystem().getNumParticles(), (RealOpenMM) tau, (RealOpenMM) temperature, (RealOpenMM) errorTol);
-        dynamics->setReferenceConstraintAlgorithm(constraints);
+        dynamics->setReferenceConstraintAlgorithm(&extractConstraints(context));
         prevTemp = temperature;
         prevFriction = friction;
         prevErrorTol = errorTol;
     }
-    constraints->setTolerance(integrator.getConstraintTolerance());
     RealOpenMM maxStepSize = (RealOpenMM) (maxTime-data.time);
-    dynamics->update(context.getSystem(), posData, velData, forceData, masses, maxStepSize);
+    dynamics->update(context.getSystem(), posData, velData, forceData, masses, maxStepSize, integrator.getConstraintTolerance());
     data.time += dynamics->getDeltaT();
     if (dynamics->getDeltaT() == maxStepSize)
         data.time = maxTime; // Avoid round-off error
@@ -1937,14 +1781,12 @@ double ReferenceIntegrateVariableLangevinStepKernel::execute(ContextImpl& contex
 }
 
 double ReferenceIntegrateVariableLangevinStepKernel::computeKineticEnergy(ContextImpl& context, const VariableLangevinIntegrator& integrator) {
-    return computeShiftedKineticEnergy(context, masses, 0.5*integrator.getStepSize(), constraints);
+    return computeShiftedKineticEnergy(context, masses, 0.5*integrator.getStepSize());
 }
 
 ReferenceIntegrateVariableVerletStepKernel::~ReferenceIntegrateVariableVerletStepKernel() {
     if (dynamics)
         delete dynamics;
-    if (constraints)
-        delete constraints;
 }
 
 void ReferenceIntegrateVariableVerletStepKernel::initialize(const System& system, const VariableVerletIntegrator& integrator) {
@@ -1952,20 +1794,6 @@ void ReferenceIntegrateVariableVerletStepKernel::initialize(const System& system
     masses.resize(numParticles);
     for (int i = 0; i < numParticles; ++i)
         masses[i] = static_cast<RealOpenMM>(system.getParticleMass(i));
-    numConstraints = system.getNumConstraints();
-    vector<pair<int, int> > constraintIndices(numConstraints);
-    vector<RealOpenMM> constraintDistances(numConstraints);
-    for (int i = 0; i < numConstraints; ++i) {
-        int particle1, particle2;
-        double distance;
-        system.getConstraintParameters(i, particle1, particle2, distance);
-        constraintIndices[i].first = particle1;
-        constraintIndices[i].second = particle2;
-        constraintDistances[i] = static_cast<RealOpenMM>(distance);
-    }
-    vector<ReferenceCCMAAlgorithm::AngleInfo> angles;
-    findAnglesForCCMA(system, angles);
-    constraints = new ReferenceCCMAAlgorithm(system.getNumParticles(), numConstraints, constraintIndices, constraintDistances, masses, angles, (RealOpenMM)integrator.getConstraintTolerance());
 }
 
 double ReferenceIntegrateVariableVerletStepKernel::execute(ContextImpl& context, const VariableVerletIntegrator& integrator, double maxTime) {
@@ -1979,12 +1807,11 @@ double ReferenceIntegrateVariableVerletStepKernel::execute(ContextImpl& context,
         if (dynamics)
             delete dynamics;
         dynamics = new ReferenceVariableVerletDynamics(context.getSystem().getNumParticles(), (RealOpenMM) errorTol);
-        dynamics->setReferenceConstraintAlgorithm(constraints);
+        dynamics->setReferenceConstraintAlgorithm(&extractConstraints(context));
         prevErrorTol = errorTol;
     }
-    constraints->setTolerance(integrator.getConstraintTolerance());
     RealOpenMM maxStepSize = (RealOpenMM) (maxTime-data.time);
-    dynamics->update(context.getSystem(), posData, velData, forceData, masses, maxStepSize);
+    dynamics->update(context.getSystem(), posData, velData, forceData, masses, maxStepSize, integrator.getConstraintTolerance());
     data.time += dynamics->getDeltaT();
     if (dynamics->getDeltaT() == maxStepSize)
         data.time = maxTime; // Avoid round-off error
@@ -1993,14 +1820,12 @@ double ReferenceIntegrateVariableVerletStepKernel::execute(ContextImpl& context,
 }
 
 double ReferenceIntegrateVariableVerletStepKernel::computeKineticEnergy(ContextImpl& context, const VariableVerletIntegrator& integrator) {
-    return computeShiftedKineticEnergy(context, masses, 0.5*integrator.getStepSize(), constraints);
+    return computeShiftedKineticEnergy(context, masses, 0.5*integrator.getStepSize());
 }
 
 ReferenceIntegrateCustomStepKernel::~ReferenceIntegrateCustomStepKernel() {
     if (dynamics)
         delete dynamics;
-    if (constraints)
-        delete constraints;
 }
 
 void ReferenceIntegrateCustomStepKernel::initialize(const System& system, const CustomIntegrator& integrator) {
@@ -2008,17 +1833,6 @@ void ReferenceIntegrateCustomStepKernel::initialize(const System& system, const 
     masses.resize(numParticles);
     for (int i = 0; i < numParticles; ++i)
         masses[i] = static_cast<RealOpenMM>(system.getParticleMass(i));
-    numConstraints = system.getNumConstraints();
-    vector<pair<int, int> > constraintIndices(numConstraints);
-    vector<RealOpenMM> constraintDistances(numConstraints);
-    for (int i = 0; i < numConstraints; ++i) {
-        int particle1, particle2;
-        double distance;
-        system.getConstraintParameters(i, particle1, particle2, distance);
-        constraintIndices[i].first = particle1;
-        constraintIndices[i].second = particle2;
-        constraintDistances[i] = static_cast<RealOpenMM>(distance);
-    }
     perDofValues.resize(integrator.getNumPerDofVariables());
     for (int i = 0; i < (int) perDofValues.size(); i++)
         perDofValues[i].resize(numParticles);
@@ -2026,10 +1840,7 @@ void ReferenceIntegrateCustomStepKernel::initialize(const System& system, const 
     // Create the computation objects.
 
     dynamics = new ReferenceCustomDynamics(system.getNumParticles(), integrator);
-    vector<ReferenceCCMAAlgorithm::AngleInfo> angles;
-    findAnglesForCCMA(system, angles);
-    constraints = new ReferenceCCMAAlgorithm(system.getNumParticles(), numConstraints, constraintIndices, constraintDistances, masses, angles, (RealOpenMM)integrator.getConstraintTolerance());
-    dynamics->setReferenceConstraintAlgorithm(constraints);
+    SimTKOpenMMUtilities::setRandomNumberSeed((unsigned int) integrator.getRandomNumberSeed());
 }
 
 void ReferenceIntegrateCustomStepKernel::execute(ContextImpl& context, CustomIntegrator& integrator, bool& forcesAreValid) {
@@ -2046,8 +1857,8 @@ void ReferenceIntegrateCustomStepKernel::execute(ContextImpl& context, CustomInt
     
     // Execute the step.
     
-    constraints->setTolerance(integrator.getConstraintTolerance());
-    dynamics->update(context, context.getSystem().getNumParticles(), posData, velData, forceData, masses, globals, perDofValues, forcesAreValid);
+    dynamics->setReferenceConstraintAlgorithm(&extractConstraints(context));
+    dynamics->update(context, context.getSystem().getNumParticles(), posData, velData, forceData, masses, globals, perDofValues, forcesAreValid, integrator.getConstraintTolerance());
     
     // Record changed global variables.
     

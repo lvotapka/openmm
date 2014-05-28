@@ -267,12 +267,17 @@ class ForceField(object):
             elif self.type == 'outOfPlane':
                 self.atoms = [int(attrib['atom1']), int(attrib['atom2']), int(attrib['atom3'])]
                 self.weights = [float(attrib['weight12']), float(attrib['weight13']), float(attrib['weightCross'])]
+            elif self.type == 'localCoords':
+                self.atoms = [int(attrib['atom1']), int(attrib['atom2']), int(attrib['atom3'])]
+                self.originWeights = [float(attrib['wo1']), float(attrib['wo2']), float(attrib['wo3'])]
+                self.xWeights = [float(attrib['wx1']), float(attrib['wx2']), float(attrib['wx3'])]
+                self.yWeights = [float(attrib['wy1']), float(attrib['wy2']), float(attrib['wy3'])]
+                self.localPos = [float(attrib['p1']), float(attrib['p2']), float(attrib['p3'])]
             else:
                 raise ValueError('Unknown virtual site type: %s' % self.type)
-            self.atoms = [x-self.index for x in self.atoms]
 
     def createSystem(self, topology, nonbondedMethod=NoCutoff, nonbondedCutoff=1.0*unit.nanometer,
-                     constraints=None, rigidWater=True, removeCMMotion=True, **args):
+                     constraints=None, rigidWater=True, removeCMMotion=True, hydrogenMass=None, **args):
         """Construct an OpenMM System representing a Topology with this force field.
 
         Parameters:
@@ -284,6 +289,8 @@ class ForceField(object):
            Allowed values are None, HBonds, AllBonds, or HAngles.
          - rigidWater (boolean=True) If true, water molecules will be fully rigid regardless of the value passed for the constraints argument
          - removeCMMotion (boolean=True) If true, a CMMotionRemover will be added to the System
+         - hydrogenMass (mass=None) The mass to use for hydrogen atoms bound to heavy atoms.  Any mass added to a hydrogen is
+           subtracted from the heavy atom to keep their total mass the same.
          - args Arbitrary additional keyword arguments may also be specified.  This allows extra parameters to be specified that are specific to
            particular force fields.
         Returns: the newly created System
@@ -324,17 +331,29 @@ class ForceField(object):
                             break
                 if matches is None:
                     raise ValueError('No template found for residue %d (%s).  %s' % (res.index+1, res.name, _findMatchErrors(self, res)))
+                matchAtoms = dict(zip(matches, res.atoms()))
                 for atom, match in zip(res.atoms(), matches):
                     data.atomType[atom] = template.atoms[match].type
                     for site in template.virtualSites:
                         if match == site.index:
-                            data.virtualSites[atom] = site
+                            data.virtualSites[atom] = (site, [matchAtoms[i].index for i in site.atoms])
 
         # Create the System and add atoms
 
         sys = mm.System()
         for atom in topology.atoms():
             sys.addParticle(self._atomTypes[data.atomType[atom]][1])
+        
+        # Adjust masses.
+        
+        if hydrogenMass is not None:
+            for atom1, atom2 in topology.bonds():
+                if atom1.element == elem.hydrogen:
+                    (atom1, atom2) = (atom2, atom1)
+                if atom2.element == elem.hydrogen and atom1.element not in (elem.hydrogen, None):
+                    transferMass = hydrogenMass-sys.getParticleMass(atom2.index)
+                    sys.setParticleMass(atom2.index, hydrogenMass)
+                    sys.setParticleMass(atom1.index, sys.getParticleMass(atom1.index)-transferMass)
 
         # Set periodic boundary conditions.
 
@@ -432,14 +451,20 @@ class ForceField(object):
         # Add virtual sites
 
         for atom in data.virtualSites:
-            site = data.virtualSites[atom]
+            (site, atoms) = data.virtualSites[atom]
             index = atom.index
             if site.type == 'average2':
-                sys.setVirtualSite(index, mm.TwoParticleAverageSite(index+site.atoms[0], index+site.atoms[1], site.weights[0], site.weights[1]))
+                sys.setVirtualSite(index, mm.TwoParticleAverageSite(atoms[0], atoms[1], site.weights[0], site.weights[1]))
             elif site.type == 'average3':
-                sys.setVirtualSite(index, mm.ThreeParticleAverageSite(index+site.atoms[0], index+site.atoms[1], index+site.atoms[2], site.weights[0], site.weights[1], site.weights[2]))
+                sys.setVirtualSite(index, mm.ThreeParticleAverageSite(atoms[0], atoms[1], atoms[2], site.weights[0], site.weights[1], site.weights[2]))
             elif site.type == 'outOfPlane':
-                sys.setVirtualSite(index, mm.OutOfPlaneSite(index+site.atoms[0], index+site.atoms[1], index+site.atoms[2], site.weights[0], site.weights[1], site.weights[2]))
+                sys.setVirtualSite(index, mm.OutOfPlaneSite(atoms[0], atoms[1], atoms[2], site.weights[0], site.weights[1], site.weights[2]))
+            elif site.type == 'localCoords':
+                sys.setVirtualSite(index, mm.LocalCoordinatesSite(atoms[0], atoms[1], atoms[2],
+                                                                  mm.Vec3(site.originWeights[0], site.originWeights[1], site.originWeights[2]),
+                                                                  mm.Vec3(site.xWeights[0], site.xWeights[1], site.xWeights[2]),
+                                                                  mm.Vec3(site.yWeights[0], site.yWeights[1], site.yWeights[2]),
+                                                                  mm.Vec3(site.localPos[0], site.localPos[1], site.localPos[2])))
 
         # Add forces to the System
 
@@ -516,6 +541,27 @@ def _matchResidue(res, template, bondedToAtom):
         bonds = [renumberAtoms[x] for x in bondedToAtom[atom.index] if x in renumberAtoms]
         bondedTo.append(bonds)
         externalBonds.append(len([x for x in bondedToAtom[atom.index] if x not in renumberAtoms]))
+
+    # For each unique combination of element and number of bonds, make sure the residue and
+    # template have the same number of atoms.
+
+    residueTypeCount = {}
+    for i, atom in enumerate(atoms):
+        key = (atom.element, len(bondedTo[i]), externalBonds[i])
+        if key not in residueTypeCount:
+            residueTypeCount[key] = 1
+        residueTypeCount[key] += 1
+    templateTypeCount = {}
+    for i, atom in enumerate(template.atoms):
+        key = (atom.element, len(atom.bondedTo), atom.externalBonds)
+        if key not in templateTypeCount:
+            templateTypeCount[key] = 1
+        templateTypeCount[key] += 1
+    if residueTypeCount != templateTypeCount:
+        return None
+
+    # Recursively match atoms.
+
     if _findAtomMatches(atoms, template, bondedTo, externalBonds, matches, hasMatch, 0):
         return matches
     return None
@@ -529,7 +575,7 @@ def _findAtomMatches(atoms, template, bondedTo, externalBonds, matches, hasMatch
     name = atoms[position].name
     for i in range(len(atoms)):
         atom = template.atoms[i]
-        if (atom.element == elem or (atom.element is None and atom.name == name)) and not hasMatch[i] and len(atom.bondedTo) == len(bondedTo[position]) and atom.externalBonds == externalBonds[position]:
+        if ((atom.element is not None and atom.element == elem) or (atom.element is None and atom.name == name)) and not hasMatch[i] and len(atom.bondedTo) == len(bondedTo[position]) and atom.externalBonds == externalBonds[position]:
             # See if the bonds for this identification are consistent
 
             allBondsMatch = all((bonded > position or matches[bonded] in atom.bondedTo for bonded in bondedTo[position]))
@@ -590,8 +636,8 @@ def _findMatchErrors(forcefield, res):
     # Return an appropriate error message.
     
     if numBestMatchAtoms == numResidueAtoms:
-        chainLength = len(list(res.chain.residues()))
-        if chainLength > 1 and (res.index == 0 or res.index == chainLength-1):
+        chainResidues = list(res.chain.residues())
+        if len(chainResidues) > 1 and (res == chainResidues[0] or res == chainResidues[-1]):
             return 'The set of atoms matches %s, but the bonds are different.  Perhaps the chain is missing a terminal group?' % bestMatchName
         return 'The set of atoms matches %s, but the bonds are different.' % bestMatchName
     if bestMatchName is not None:
@@ -1475,7 +1521,17 @@ class CustomGBGenerator:
             generator.energyTerms.append((term.text, computationMap[term.attrib['type']]))
         for function in element.findall("Function"):
             values = [float(x) for x in function.text.split()]
-            generator.functions.append((function.attrib['name'], values, float(function.attrib['min']), float(function.attrib['max'])))
+            if 'type' in function.attrib:
+                type = function.attrib['type']
+            else:
+                type = 'Continuous1D'
+            params = {}
+            for key in function.attrib:
+                if key.endswith('size'):
+                    params[key] = int(function.attrib[key])
+                elif key.endswith('min') or key.endswith('max'):
+                    params[key] = float(function.attrib[key])
+            generator.functions.append((function.attrib['name'], type, values, params))
 
     def createForce(self, sys, data, nonbondedMethod, nonbondedCutoff, args):
         methodMap = {NoCutoff:mm.CustomGBForce.NoCutoff,
@@ -1492,8 +1548,19 @@ class CustomGBGenerator:
             force.addComputedValue(value[0], value[1], value[2])
         for term in self.energyTerms:
             force.addEnergyTerm(term[0], term[1])
-        for function in self.functions:
-            force.addFunction(function[0], function[1], function[2], function[3])
+        for (name, type, values, params) in self.functions:
+            if type == 'Continuous1D':
+                force.addTabulatedFunction(name, mm.Continuous1DFunction(values, params['min'], params['max']))
+            elif type == 'Continuous2D':
+                force.addTabulatedFunction(name, mm.Continuous2DFunction(params['xsize'], params['ysize'], values, params['xmin'], params['xmax'], params['ymin'], params['ymax']))
+            elif type == 'Continuous3D':
+                force.addTabulatedFunction(name, mm.Continuous2DFunction(params['xsize'], params['ysize'], params['zsize'], values, params['xmin'], params['xmax'], params['ymin'], params['ymax'], params['zmin'], params['zmax']))
+            elif type == 'Discrete1D':
+                force.addTabulatedFunction(name, mm.Discrete1DFunction(values))
+            elif type == 'Discrete2D':
+                force.addTabulatedFunction(name, mm.Discrete2DFunction(params['xsize'], params['ysize'], values))
+            elif type == 'Discrete3D':
+                force.addTabulatedFunction(name, mm.Discrete2DFunction(params['xsize'], params['ysize'], params['zsize'], values))
         for atom in data.atoms:
             t = data.atomType[atom]
             if t in self.typeMap:
@@ -2450,9 +2517,10 @@ class AmoebaTorsionTorsionGenerator:
                 gridRow.append(float(gridEntry.attrib['angle1']))
                 gridRow.append(float(gridEntry.attrib['angle2']))
                 gridRow.append(float(gridEntry.attrib['f']))
-                gridRow.append(float(gridEntry.attrib['fx']))
-                gridRow.append(float(gridEntry.attrib['fy']))
-                gridRow.append(float(gridEntry.attrib['fxy']))
+                if 'fx' in gridEntry.attrib:
+                    gridRow.append(float(gridEntry.attrib['fx']))
+                    gridRow.append(float(gridEntry.attrib['fy']))
+                    gridRow.append(float(gridEntry.attrib['fxy']))
                 gridCol.append(gridRow)
 
                 gridColIndex  += 1

@@ -15,7 +15,7 @@ from pdbfile import PDBFile
 from forcefield import ForceField
 from simulation import Simulation
 from pdbreporter import PDBReporter
-from amberprmtopfile import AmberPrmtopFile
+from amberprmtopfile import AmberPrmtopFile, HCT, OBC1, OBC2, GBn, GBn2
 from amberinpcrdfile import AmberInpcrdFile
 from dcdfile import DCDFile
 from gromacsgrofile import GromacsGroFile
@@ -24,6 +24,11 @@ from dcdreporter import DCDReporter
 from modeller import Modeller
 from statedatareporter import StateDataReporter
 from element import Element
+from desmonddmsfile import DesmondDMSFile
+from checkpointreporter import CheckpointReporter
+from charmmcrdfiles import CharmmCrdFile, CharmmRstFile
+from charmmparameterset import CharmmParameterSet
+from charmmpsffile import CharmmPsfFile
 
 # Enumerated values
 
@@ -36,8 +41,3 @@ PME = forcefield.PME
 HBonds = forcefield.HBonds
 AllBonds = forcefield.AllBonds
 HAngles = forcefield.HAngles
-
-HCT = amberprmtopfile.HCT
-OBC1 = amberprmtopfile.OBC1
-OBC2 = amberprmtopfile.OBC2
-GBn = amberprmtopfile.GBn
