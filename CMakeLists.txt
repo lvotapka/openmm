@@ -61,6 +61,11 @@ ELSE(WIN32)
     ENDIF(NOT OPENMM_INSTALL_PREFIX)
 ENDIF(WIN32)
 
+# Include CPU-Features for Android
+IF (ANDROID)
+    INCLUDE_DIRECTORIES(${ANDROID_NDK}/sources/cpufeatures)
+ENDIF (ANDROID)
+
 # It seems that on linux and mac, everything is trying to be installed in /usr/local/openmm
 # But if every install target is prefixed with /openmm/, on Windows the install files
 # end up in C:/Program Files/OpenMM/openmm/ which is ugly.
@@ -87,9 +92,11 @@ IF(WIN32)
     SET(PTHREADS_LIB pthreadVC2)
     SET(PTHREADS_LIB_STATIC pthreadVC2_static_mt)
 ELSE(WIN32)
-    SET(PTHREADS_LIB pthread)
-    # in linux, even in static builds we link against the dynamic object (since its tied to libc versions)
-    SET(PTHREADS_LIB_STATIC pthread)
+    IF (NOT ANDROID)
+        SET(PTHREADS_LIB pthread)
+        # in linux, even in static builds we link against the dynamic object (since its tied to libc versions)
+        SET(PTHREADS_LIB_STATIC pthread)
+    ENDIF (NOT ANDROID)
 ENDIF(WIN32)
 
 # The build system will set ARCH64 for 64 bit builds, which require
@@ -121,11 +128,11 @@ IF (APPLE)
     SET (CMAKE_INSTALL_NAME_DIR "@rpath")
     SET(EXTRA_COMPILE_FLAGS "-msse2 -stdlib=libc++")
 ELSE (APPLE)
-    IF (MSVC)
+    IF (MSVC OR ANDROID)
         SET(EXTRA_COMPILE_FLAGS)
-    ELSE (MSVC)
+    ELSE (MSVC OR ANDROID)
         SET(EXTRA_COMPILE_FLAGS "-msse2")
-    ENDIF (MSVC)
+    ENDIF (MSVC OR ANDROID)
 ENDIF (APPLE)
 
 IF(UNIX AND NOT CMAKE_BUILD_TYPE)
@@ -137,8 +144,13 @@ IF (NOT CMAKE_CXX_FLAGS_DEBUG)
 ENDIF (NOT CMAKE_CXX_FLAGS_DEBUG)
 
 IF (NOT CMAKE_CXX_FLAGS_RELEASE)
-    SET(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG" CACHE STRING 
-          "To use when CMAKE_BUILD_TYPE=Release" FORCE)
+    IF (ANDROID)
+        SET(CMAKE_CXX_FLAGS_RELEASE "-mfloat-abi=softfp -march=armv7-a -mfpu=neon -funsafe-math-optimizations -O3 -DNDEBUG" CACHE STRING
+        "To use when CMAKE_BUILD_TYPE=Release" FORCE)
+    ELSE (ANDROID)
+        SET(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG" CACHE STRING 
+        "To use when CMAKE_BUILD_TYPE=Release" FORCE)
+    ENDIF (ANDROID)
 ENDIF (NOT CMAKE_CXX_FLAGS_RELEASE)
 
 
@@ -252,7 +264,11 @@ FOREACH(subdir ${OPENMM_SOURCE_SUBDIRS})
     ## OpenMM was previously installed there.
     INCLUDE_DIRECTORIES(BEFORE ${CMAKE_CURRENT_SOURCE_DIR}/${subdir}/include)
 ENDFOREACH(subdir)
-SET_SOURCE_FILES_PROPERTIES(${CMAKE_SOURCE_DIR}/libraries/sfmt/src/SFMT.cpp PROPERTIES COMPILE_FLAGS "-DHAVE_SSE2=1")
+IF (ANDROID)
+    SET_SOURCE_FILES_PROPERTIES(${CMAKE_SOURCE_DIR}/libraries/sfmt/src/SFMT.cpp PROPERTIES COMPILE_FLAGS "-UHAVE_SSE2")
+ELSE (ANDROID)
+    SET_SOURCE_FILES_PROPERTIES(${CMAKE_SOURCE_DIR}/libraries/sfmt/src/SFMT.cpp PROPERTIES COMPILE_FLAGS "-DHAVE_SSE2=1")
+ENDIF(ANDROID)
 
 # If API wrappers are being generated, and add them to the build.
 SET(OPENMM_BUILD_C_AND_FORTRAN_WRAPPERS ON CACHE BOOL "Build wrappers for C and Fortran")
@@ -287,13 +303,17 @@ ENDIF(OPENMM_BUILD_C_AND_FORTRAN_WRAPPERS)
 # On Linux need to link to libdl
 FIND_LIBRARY(DL_LIBRARY dl)
 IF(DL_LIBRARY)
-  TARGET_LINK_LIBRARIES(${SHARED_TARGET} ${DL_LIBRARY} ${PTHREADS_LIB})
-  IF(OPENMM_BUILD_STATIC_LIB)
-    TARGET_LINK_LIBRARIES(${STATIC_TARGET} ${DL_LIBRARY} ${PTHREADS_LIB})
-  ENDIF(OPENMM_BUILD_STATIC_LIB)
-  MARK_AS_ADVANCED(DL_LIBRARY)
+    TARGET_LINK_LIBRARIES(${SHARED_TARGET} ${DL_LIBRARY} ${PTHREADS_LIB})
+    IF(OPENMM_BUILD_STATIC_LIB)
+        TARGET_LINK_LIBRARIES(${STATIC_TARGET} ${DL_LIBRARY} ${PTHREADS_LIB})
+    ENDIF(OPENMM_BUILD_STATIC_LIB)
+    MARK_AS_ADVANCED(DL_LIBRARY)
 ELSE(DL_LIBRARY)
-  TARGET_LINK_LIBRARIES(${SHARED_TARGET} ${PTHREADS_LIB})
+    IF (ANDROID)
+        TARGET_LINK_LIBRARIES(${SHARED_TARGET} ${PTHREADS_LIB} cpufeatures)
+    ELSE (ANDROID)
+        TARGET_LINK_LIBRARIES(${SHARED_TARGET} ${PTHREADS_LIB})
+    ENDIF (ANDROID)
 ENDIF(DL_LIBRARY)
 
 ADD_SUBDIRECTORY(platforms/reference/tests)
@@ -356,12 +376,11 @@ MARK_AS_ADVANCED(CUDA_BUILD_CUBIN)
 MARK_AS_ADVANCED(CUDA_BUILD_EMULATION)
 
 FIND_PACKAGE(OpenCL QUIET)
-# Plus the tesla/linux is taking too long on the tests
-IF(OPENCL_FOUND)
+IF(OPENCL_FOUND AND NOT APPLE)
     SET(OPENMM_BUILD_OPENCL_LIB ON CACHE BOOL "Build OpenMMOpenCL library")
-ELSE(OPENCL_FOUND)
+ELSE(OPENCL_FOUND AND NOT APPLE)
     SET(OPENMM_BUILD_OPENCL_LIB OFF CACHE BOOL "Build OpenMMOpenCL library")
-ENDIF(OPENCL_FOUND)
+ENDIF(OPENCL_FOUND AND NOT APPLE)
 IF(OPENMM_BUILD_OPENCL_LIB)
     ADD_SUBDIRECTORY(platforms/opencl)
 ENDIF(OPENMM_BUILD_OPENCL_LIB)
@@ -476,89 +495,7 @@ ELSE (EXECUTABLE_OUTPUT_PATH)
   SET (TEST_PATH .)
 ENDIF (EXECUTABLE_OUTPUT_PATH)
 
-# Build and install documentation
-
-find_package(Doxygen QUIET)
-mark_as_advanced(CLEAR DOXYGEN_EXECUTABLE)
-IF(DOXYGEN_EXECUTABLE)
-    # Generate C++ API documentation
-
-    SET(DOXY_CONFIG_C++ "${CMAKE_CURRENT_BINARY_DIR}/DoxyfileC++")
-    CONFIGURE_FILE(${CMAKE_CURRENT_SOURCE_DIR}/docs/DoxyfileC++.in 
-          ${DOXY_CONFIG_C++}
-          @ONLY )
-    FILE(GLOB_RECURSE OPENMM_INCLUDES "openmm/include/*.h")
-    FILE(GLOB_RECURSE OLLA_INCLUDES "olla/include/*.h")
-    ADD_CUSTOM_COMMAND(
-        OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/api-c++/index.html"
-        COMMAND ${DOXYGEN_EXECUTABLE} ${DOXY_CONFIG_C++}
-        DEPENDS ${OPENMM_INCLUDES} ${OLLA_INCLUDES}
-        WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-        COMMENT "Generating C++ API documentation using Doxygen")
-    ADD_CUSTOM_TARGET(C++ApiDocs 
-        DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/api-c++/index.html"
-        COMMENT "Generating C++ API documentation using Doxygen"
-        SOURCES 
-            "${CMAKE_CURRENT_SOURCE_DIR}/docs/DoxyfileC++.in"
-            ${OPENMM_INCLUDES}
-            ${OLLA_INCLUDES}
-    ) 
-    FILE(MAKE_DIRECTORY "${PROJECT_BINARY_DIR}/api-c++/")
-    INSTALL(DIRECTORY "${PROJECT_BINARY_DIR}/api-c++/"
-            DESTINATION "docs/api-c++/")
-    INSTALL(FILES "docs/C++ API Reference.html"
-            DESTINATION "docs/")
-    ADD_CUSTOM_TARGET(DoxygenApiDocs
-        DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/api-c++/index.html"
-        COMMENT "Generating C++ API documentation using Doxygen"
-        SOURCES 
-        "${CMAKE_CURRENT_SOURCE_DIR}/docs/DoxyfileC++.in"
-        "${CMAKE_CURRENT_SOURCE_DIR}/docs/DoxyfilePython.in"
-        ${OPENMM_INCLUDES}
-        ${OLLA_INCLUDES}
-    )
-    set(OPENMM_GENERATE_API_DOCS OFF CACHE BOOL "Whether to create API documentation using Doxygen")
-    IF (OPENMM_GENERATE_API_DOCS)
-        SET_TARGET_PROPERTIES(DoxygenApiDocs PROPERTIES EXCLUDE_FROM_ALL FALSE)
-    ENDIF (OPENMM_GENERATE_API_DOCS)
-
-    # Generate Python API documentation
-
-    IF (OPENMM_BUILD_PYTHON_WRAPPERS)
-        SET(DOXY_CONFIG_PYTHON "${CMAKE_CURRENT_BINARY_DIR}/DoxyfilePython")
-        CONFIGURE_FILE(${CMAKE_CURRENT_SOURCE_DIR}/docs/DoxyfilePython.in 
-            ${DOXY_CONFIG_PYTHON}
-            @ONLY )
-        ADD_CUSTOM_COMMAND(
-            OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/api-python/index.html"
-            COMMAND ${DOXYGEN_EXECUTABLE} ${DOXY_CONFIG_PYTHON}
-            DEPENDS RunSwig
-            WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-            COMMENT "Generating Python API documentation using Doxygen")
-        ADD_CUSTOM_TARGET(PythonApiDocs 
-            DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/api-python/index.html"
-            COMMENT "Generating Python API documentation using Doxygen"
-            SOURCES 
-                "${CMAKE_CURRENT_SOURCE_DIR}/docs/DoxyfilePython.in"
-                ${OPENMM_INCLUDES}
-                ${OLLA_INCLUDES}
-        ) 
-        FILE(MAKE_DIRECTORY "${PROJECT_BINARY_DIR}/api-python/")
-        INSTALL(DIRECTORY "${PROJECT_BINARY_DIR}/api-python/"
-                DESTINATION "docs/api-python/")
-        INSTALL(FILES "docs/Python API Reference.html"
-                DESTINATION "docs/")
-        ADD_DEPENDENCIES(DoxygenApiDocs PythonApiDocs)
-    ENDIF (OPENMM_BUILD_PYTHON_WRAPPERS)
-ENDIF(DOXYGEN_EXECUTABLE)
-
-install(FILES docs/OpenMMUsersGuide.pdf docs/OpenMMDeveloperGuide.pdf
-    DESTINATION docs/)
-
-FILE(GLOB LICENSE_FILES "docs/licenses/*.txt")
-install(FILES ${LICENSE_FILES}
-    DESTINATION licenses/)
-
+ADD_SUBDIRECTORY(docs-source)
 ADD_SUBDIRECTORY(tests)
 ADD_SUBDIRECTORY(examples)
 

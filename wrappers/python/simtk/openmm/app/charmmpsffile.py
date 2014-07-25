@@ -90,6 +90,7 @@ class CharmmPsfFile(object):
         - bond_list
         - angle_list
         - dihedral_list
+        - dihedral_parameter_list
         - improper_list
         - cmap_list
         - donor_list    # hbonds donors?
@@ -157,10 +158,13 @@ class CharmmPsfFile(object):
         title = list()
         for i in range(ntitle):
             title.append(psf.readline().rstrip())
-        # Skip the blank line
-        psf.readline()
+        # Skip all blank lines. Most of the time there is only 1, but I've seen
+        # a file that has 2
+        line = psf.readline().strip()
+        while not line:
+            line = psf.readline().strip()
         # Next is the number of atoms
-        natom = conv(psf.readline().strip(), int, 'natom')
+        natom = conv(line, int, 'natom')
         # Parse all of the atoms
         residue_list = ResidueList()
         atom_list = AtomList()
@@ -349,6 +353,7 @@ class CharmmPsfFile(object):
         self.bond_list = bond_list
         self.angle_list = angle_list
         self.dihedral_list = dihedral_list
+        self.dihedral_parameter_list = TrackedList()
         self.improper_list = improper_list
         self.cmap_list = cmap_list
         self.donor_list = donor_list
@@ -599,9 +604,9 @@ class CharmmPsfFile(object):
               central atoms in impropers) and see if that matches.  Wild-cards
               will apply ONLY if specific parameters cannot be found.
 
-            - This method will expand the dihedral_list attribute by adding a
-              separate Dihedral object for each term for types that have a
-              multi-term expansion
+            - This method will expand the dihedral_parameter_list attribute by
+              adding a separate Dihedral object for each term for types that
+              have a multi-term expansion
         """
         # First load the atom types
         types_are_int = False
@@ -643,12 +648,9 @@ class CharmmPsfFile(object):
                     self.urey_bradley_list.append(ub)
             except KeyError:
                 raise MissingParameter('Missing angle type for %r' % ang)
-        # Next load all of the dihedrals. This is a little trickier since we
-        # need to back up the existing dihedral list and replace it with a
-        # longer one that has only one Fourier term per Dihedral instance.
-        dihedral_list = self.dihedral_list
-        self.dihedral_list = TrackedList()
-        for dih in dihedral_list:
+        # Next load all of the dihedrals.
+        self.dihedral_parameter_list = TrackedList()
+        for dih in self.dihedral_list:
             # Store the atoms
             a1, a2, a3, a4 = dih.atom1, dih.atom2, dih.atom3, dih.atom4
             at1, at2, at3, at4 = a1.attype, a2.attype, a3.attype, a4.attype
@@ -662,14 +664,14 @@ class CharmmPsfFile(object):
                                            '%r' % dih)
             dtlist = parmset.dihedral_types[key]
             for i, dt in enumerate(dtlist):
-                self.dihedral_list.append(Dihedral(a1, a2, a3, a4, dt))
+                self.dihedral_parameter_list.append(Dihedral(a1,a2,a3,a4,dt))
                 # See if we include the end-group interactions for this
                 # dihedral. We do IFF it is the last or only dihedral term and
                 # it is NOT in the angle/bond partners
                 if i != len(dtlist) - 1:
-                    self.dihedral_list[-1].end_groups_active = False
+                    self.dihedral_parameter_list[-1].end_groups_active = False
                 elif a1 in a4.bond_partners or a1 in a4.angle_partners:
-                    self.dihedral_list[-1].end_groups_active = False
+                    self.dihedral_parameter_list[-1].end_groups_active = False
         # Now do the impropers
         for imp in self.improper_list:
             # Store the atoms
@@ -755,6 +757,12 @@ class CharmmPsfFile(object):
             - alpha, beta, gamma (floats, optional) : Angles between the
                 periodic cells.
         """
+        try:
+            # Since we are setting the box, delete the cached box lengths if we
+            # have them to make sure they are recomputed if desired.
+            del self._boxLengths
+        except AttributeError:
+            pass
         self.box_vectors = _box_vectors_from_lengths_angles(a, b, c,
                                                             alpha, beta, gamma)
         # If we already have a _topology instance, then we have possibly changed
@@ -952,8 +960,6 @@ class CharmmPsfFile(object):
          -  flexibleConstraints (bool=True) Are our constraints flexible or not?
          -  verbose (bool=False) Optionally prints out a running progress report
         """
-        # back up the dihedral list
-        dihedral_list = self.dihedral_list
         # Load the parameter set
         self.loadParameters(params.condense())
         hasbox = self.topology.getUnitCellDimensions() is not None
@@ -989,11 +995,25 @@ class CharmmPsfFile(object):
                             u.kilojoule_per_mole)
         ene_conv = dihe_frc_conv
       
-        # Create the system
+        # Create the system and determine if any of our atoms have NBFIX (and
+        # therefore requires a CustomNonbondedForce instead)
+        typenames = set()
         system = mm.System()
         if verbose: print('Adding particles...')
         for atom in self.atom_list:
+            typenames.add(atom.type.name)
             system.addParticle(atom.mass)
+        has_nbfix_terms = False
+        typenames = list(typenames)
+        try:
+            for i, typename in enumerate(typenames):
+                typ = params.atom_types_str[typename]
+                for j in range(i, len(typenames)):
+                    if typenames[j] in typ.nbfix:
+                        has_nbfix_terms = True
+                        raise StopIteration
+        except StopIteration:
+            pass
         # Set up the constraints
         if verbose and (constraints is not None and not rigidWater):
             print('Adding constraints...')
@@ -1103,7 +1123,7 @@ class CharmmPsfFile(object):
         if verbose: print('Adding torsions...')
         force = mm.PeriodicTorsionForce()
         force.setForceGroup(self.DIHEDRAL_FORCE_GROUP)
-        for tor in self.dihedral_list:
+        for tor in self.dihedral_parameter_list:
             force.addTorsion(tor.atom1.idx, tor.atom2.idx, tor.atom3.idx,
                              tor.atom4.idx, tor.dihedral_type.per,
                              tor.dihedral_type.phase*pi/180,
@@ -1179,8 +1199,11 @@ class CharmmPsfFile(object):
                 if switchDistance >= nonbondedCutoff:
                     raise ValueError('switchDistance is too large compared '
                                      'to the cutoff!')
-                    force.setUseSwitchingFunction(True)
-                    force.setSwitchingDistance(switchDistance)
+                if abs(switchDistance) != switchDistance:
+                    # Detects negatives for both Quantity and float
+                    raise ValueError('switchDistance must be non-negative!')
+                force.setUseSwitchingFunction(True)
+                force.setSwitchingDistance(switchDistance)
 
         else: # periodic
             # Set up box vectors (from inpcrd if available, or fall back to
@@ -1220,22 +1243,101 @@ class CharmmPsfFile(object):
                 if switchDistance >= nonbondedCutoff:
                     raise ValueError('switchDistance is too large compared '
                                      'to the cutoff!')
-                    force.setUseSwitchingFunction(True)
-                    force.setSwitchingDistance(switchDistance)
+                if abs(switchDistance) != switchDistance:
+                    # Detects negatives for both Quantity and float
+                    raise ValueError('switchDistance must be non-negative!')
+                force.setUseSwitchingFunction(True)
+                force.setSwitchingDistance(switchDistance)
 
             if ewaldErrorTolerance is not None:
                 force.setEwaldErrorTolerance(ewaldErrorTolerance)
 
         # Add per-particle nonbonded parameters (LJ params)
         sigma_scale = 2**(-1/6) * 2
-        for i, atm in enumerate(self.atom_list):
-            force.addParticle(atm.charge, sigma_scale*atm.type.rmin*length_conv,
-                              abs(atm.type.epsilon*ene_conv))
+        if not has_nbfix_terms:
+            for atm in self.atom_list:
+                force.addParticle(atm.charge, sigma_scale*atm.type.rmin*length_conv,
+                                  abs(atm.type.epsilon*ene_conv))
+        else:
+            for atm in self.atom_list:
+                force.addParticle(atm.charge, 1.0, 0.0)
+            # Now add the custom nonbonded force that implements NBFIX. First
+            # thing we need to do is condense our number of types
+            lj_idx_list = [0 for atom in self.atom_list]
+            lj_radii, lj_depths = [], []
+            num_lj_types = 0
+            lj_type_list = []
+            for i, atom in enumerate(self.atom_list):
+                atom = atom.type
+                if lj_idx_list[i]: continue # already assigned
+                num_lj_types += 1
+                lj_idx_list[i] = num_lj_types
+                ljtype = (atom.rmin, atom.epsilon)
+                lj_type_list.append(atom)
+                lj_radii.append(atom.rmin)
+                lj_depths.append(atom.epsilon)
+                for j in range(i+1, len(self.atom_list)):
+                    atom2 = self.atom_list[j].type
+                    if lj_idx_list[j] > 0: continue # already assigned
+                    if atom2 is atom:
+                        lj_idx_list[j] = num_lj_types
+                    elif not atom.nbfix:
+                        # Only non-NBFIXed atom types can be compressed
+                        ljtype2 = (atom2.rmin, atom2.epsilon)
+                        if ljtype == ljtype2:
+                            lj_idx_list[j] = num_lj_types
+            # Now everything is assigned. Create the A-coefficient and
+            # B-coefficient arrays
+            acoef = [0 for i in range(num_lj_types*num_lj_types)]
+            bcoef = acoef[:]
+            for i in range(num_lj_types):
+                for j in range(num_lj_types):
+                    namej = lj_type_list[j].name
+                    try:
+                        rij, wdij, rij14, wdij14 = lj_type_list[i].nbfix[namej]
+                    except KeyError:
+                        rij = (lj_radii[i] + lj_radii[j]) * length_conv
+                        wdij = sqrt(lj_depths[i] * lj_depths[j]) * ene_conv
+                    else:
+                        rij *= length_conv
+                        wdij *= ene_conv
+                    acoef[i+num_lj_types*j] = sqrt(wdij) * rij**6
+                    bcoef[i+num_lj_types*j] = 2 * wdij * rij**6
+            cforce = mm.CustomNonbondedForce('(a/r6)^2-b/r6; r6=r^6;'
+                                             'a=acoef(type1, type2);'
+                                             'b=bcoef(type1, type2)')
+            cforce.addTabulatedFunction('acoef',
+                    mm.Discrete2DFunction(num_lj_types, num_lj_types, acoef))
+            cforce.addTabulatedFunction('bcoef',
+                    mm.Discrete2DFunction(num_lj_types, num_lj_types, bcoef))
+            cforce.addPerParticleParameter('type')
+            cforce.setForceGroup(self.NONBONDED_FORCE_GROUP)
+            if (nonbondedMethod is ff.PME or nonbondedMethod is ff.Ewald or
+                        nonbondedMethod is ff.CutoffPeriodic):
+                cforce.setNonbondedMethod(cforce.CutoffPeriodic)
+                cforce.setCutoffDistance(nonbondedCutoff)
+                cforce.setUseLongRangeCorrection(True)
+            elif nonbondedMethod is ff.NoCutoff:
+                cforce.setNonbondedMethod(cforce.NoCutoff)
+            elif nonbondedMethod is ff.CutoffNonPeriodic:
+                cforce.setNonbondedMethod(cforce.CutoffNonPeriodic)
+                cforce.setCutoffDistance(nonbondedCutoff)
+            else:
+                raise ValueError('Unrecognized nonbonded method')
+            if switchDistance and nonbondedMethod is not ff.NoCutoff:
+                # make sure it's legal
+                if switchDistance >= nonbondedCutoff:
+                    raise ValueError('switchDistance is too large compared '
+                                     'to the cutoff!')
+                    cforce.setUseSwitchingFunction(True)
+                    cforce.setSwitchingDistance(switchDistance)
+            for i in lj_idx_list:
+                cforce.addParticle((i - 1,)) # adjust for indexing from 0
 
         # Add 1-4 interactions
         excluded_atom_pairs = set() # save these pairs so we don't zero them out
         sigma_scale = 2**(-1/6)
-        for tor in self.dihedral_list:
+        for tor in self.dihedral_parameter_list:
             # First check to see if atoms 1 and 4 are already excluded because
             # they are 1-2 or 1-3 pairs (would happen in 6-member rings or
             # fewer). Then check that they're not already added as exclusions
@@ -1271,6 +1373,13 @@ class CharmmPsfFile(object):
                     continue
                 force.addException(atom.idx, atom2.idx, 0.0, 0.1, 0.0)
         system.addForce(force)
+        # If we needed a CustomNonbondedForce, map all of the exceptions from
+        # the NonbondedForce to the CustomNonbondedForce
+        if has_nbfix_terms:
+            for i in range(force.getNumExceptions()):
+                ii, jj, q, eps, sig = force.getExceptionParameters(i)
+                cforce.addExclusion(ii, jj)
+            system.addForce(cforce)
 
         # Add GB model if we're doing one
         if implicitSolvent is not None:
@@ -1355,9 +1464,6 @@ class CharmmPsfFile(object):
         # Cache our system for easy access
         self._system = system
 
-        # Restore the dihedral list to allow reparametrization later
-        self.dihedral_list = dihedral_list
-
         return system
 
     @property
@@ -1422,9 +1528,30 @@ class CharmmPsfFile(object):
     @property
     def boxLengths(self):
         """ Return tuple of 3 units """
+        try:
+            # See if we have a cached version
+            return self._boxLengths
+        except AttributeError:
+            pass
         if self.box_vectors is not None:
-            return (self.box_vectors[0][0], self.box_vectors[0][1],
-                    self.box_vectors[0][2])
+            # Get the lengths of each vector
+            if u.is_quantity(self.box_vectors):
+                # Unlikely -- each vector is like a quantity
+                vecs = self.box_vectors.value_in_unit(u.nanometers)
+            elif u.is_quantity(self.box_vectors[0]):
+                # Assume all box vectors are quantities
+                vecs = [x.value_in_unit(u.nanometers) for x in self.box_vectors]
+            else:
+                # Assume nanometers
+                vecs = self.box_vectors
+            a = sqrt(vecs[0][0]*vecs[0][0] + vecs[0][1]*vecs[0][1] +
+                     vecs[0][2]*vecs[0][2])
+            b = sqrt(vecs[1][0]*vecs[1][0] + vecs[1][1]*vecs[1][1] +
+                     vecs[1][2]*vecs[1][2])
+            c = sqrt(vecs[2][0]*vecs[2][0] + vecs[2][1]*vecs[2][1] +
+                     vecs[2][2]*vecs[2][2])
+            self._boxLengths = (a, b, c) * u.nanometers
+            return self._boxLengths
         return None
 
     @boxLengths.setter
@@ -1440,6 +1567,12 @@ class CharmmPsfFile(object):
     @boxVectors.setter
     def boxVectors(self, stuff):
         """ Sets the box vectors """
+        try:
+            # We may be changing the box, so delete the cached box lengths to
+            # make sure they are recomputed if desired
+            del self._boxLengths
+        except AttributeError:
+            pass
         self.box_vectors = stuff
 
     def deleteCmap(self):
