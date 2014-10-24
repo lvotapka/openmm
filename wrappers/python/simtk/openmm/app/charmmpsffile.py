@@ -12,7 +12,7 @@ Copyright (c) 2014 the Authors
 
 Author: Jason M. Swails
 Contributors:
-Date: April 18, 2014
+Date: August 19, 2014
 
 Permission is hereby granted, free of charge, to any person obtaining a
 copy of this software and associated documentation files (the "Software"),
@@ -43,16 +43,15 @@ import simtk.unit as u
 from simtk.openmm.app import (forcefield as ff, Topology, element)
 from simtk.openmm.app.amberprmtopfile import HCT, OBC1, OBC2, GBn, GBn2
 from simtk.openmm.app.internal.customgbforces import (GBSAHCTForce,
-                GBSAOBC1Force, GBSAOBC2Force, GBSAGBnForce, GBSAGBn2Force)
+                GBSAOBC1Force, GBSAOBC2Force, GBSAGBnForce, GBSAGBn2Force, convertParameters)
 # CHARMM imports
-from simtk.openmm.app.internal.charmm._charmmfile import CharmmFile
 from simtk.openmm.app.internal.charmm.topologyobjects import (
                 ResidueList, AtomList, TrackedList, Bond, Angle, Dihedral,
                 Improper, AcceptorDonor, Group, Cmap, UreyBradley,
                 NoUreyBradley)
 from simtk.openmm.app.internal.charmm.exceptions import (
                 CharmmPSFError, MoleculeError, CharmmPSFWarning,
-                MissingParameter)
+                MissingParameter, CharmmPsfEOF)
 import warnings
 
 TINY = 1e-8
@@ -73,6 +72,29 @@ def _catchindexerror(func):
             raise CharmmPSFError('Array is too short: %s' % e)
 
     return newfunc
+
+class _ZeroDict(dict):
+    """
+    Contains a dict that returns dummy (zero) arguments when a key is not
+    present rather than raising a KeyError.  The return value for non-existent
+    items is (0, []). It also special-case sections that have multiple pointers
+    to avoid index errors if those are not present in the PSF file
+    """
+    def __getitem__(self, key):
+        try:
+            return dict.__getitem__(self, key)
+        except KeyError:
+            if key.startswith('NGRP'):
+                for k in self:
+                    if k.startswith('NGRP'):
+                        return dict.__getitem__(self, k)
+                return [0, 0], []
+            elif key.startswith('NUMLP'):
+                for k in self:
+                    if k.startswith('NUMLP'):
+                        return dict.__getitem__(self, k)
+                return [0, 0], []
+            return 0, []
 
 # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
@@ -128,8 +150,8 @@ class CharmmPsfFile(object):
     @_catchindexerror
     def __init__(self, psf_name):
         """
-        Opens and parses a PSF file, then instantiates a CharmmPsfFile instance
-        from the data.
+        Opens and parses a PSF file, then instantiates a CharmmPsfFile
+        instance from the data.
             
         Parameters:
             psf_name (str) : Name of the PSF file (it must exist)
@@ -143,33 +165,32 @@ class CharmmPsfFile(object):
         if not os.path.exists(psf_name):
             raise IOError('Could not find PSF file %s' % psf_name)
         # Open the PSF and read the first line. It must start with "PSF"
-        psf = CharmmFile(psf_name, 'r')
+        psf = open(psf_name, 'r')
         line = psf.readline()
         if not line.startswith('PSF'):
             raise CharmmPSFError('Unrecognized PSF file. First line is %s' %
                                  line.strip())
         # Store the flags
         psf_flags = line.split()[1:]
-        # Next line is blank
+        # Now get all of the sections and store them in a dict
         psf.readline()
-        # The next line has one number -- the number of title lines
-        ntitle = conv(psf.readline().strip(), int, 'title count')
+        # Now get all of the sections
+        psfsections = _ZeroDict()
+        while True:
+            try:
+                sec, ptr, data = CharmmPsfFile._parse_psf_section(psf)
+            except CharmmPsfEOF:
+                break
+            psfsections[sec] = (ptr, data)
         # store the title
-        title = list()
-        for i in range(ntitle):
-            title.append(psf.readline().rstrip())
-        # Skip all blank lines. Most of the time there is only 1, but I've seen
-        # a file that has 2
-        line = psf.readline().strip()
-        while not line:
-            line = psf.readline().strip()
+        title = psfsections['NTITLE'][1]
         # Next is the number of atoms
-        natom = conv(line, int, 'natom')
+        natom = conv(psfsections['NATOM'][0], int, 'natom')
         # Parse all of the atoms
         residue_list = ResidueList()
         atom_list = AtomList()
         for i in xrange(natom):
-            words = psf.readline().split()
+            words = psfsections['NATOM'][1][i].split()
             atid = int(words[0])
             if atid != i + 1:
                 raise CharmmPSFError('Nonsequential atoms detected!')
@@ -190,10 +211,10 @@ class CharmmPsfFile(object):
                                          attype, charge, mass, props)
             atom_list.append(atom)
         atom_list.assign_indexes()
-        # Eat the next line
-        psf.readline()
+        atom_list.changed = False
         # Now get the number of bonds
-        nbond, holder = CharmmPsfFile._parse_psf_section(psf, int)
+        nbond = conv(psfsections['NBOND'][0], int, 'number of bonds')
+        holder = psfsections['NBOND'][1]
         bond_list = TrackedList()
         if len(holder) != nbond * 2:
             raise CharmmPSFError('Got %d indexes for %d bonds' %
@@ -204,7 +225,8 @@ class CharmmPsfFile(object):
             bond_list.append(Bond(atom_list[id1], atom_list[id2]))
         bond_list.changed = False
         # Now get the number of angles and the angle list
-        ntheta, holder = CharmmPsfFile._parse_psf_section(psf, int)
+        ntheta = conv(psfsections['NTHETA'][0], int, 'number of angles')
+        holder = psfsections['NTHETA'][1]
         angle_list = TrackedList()
         if len(holder) != ntheta * 3:
             raise CharmmPSFError('Got %d indexes for %d angles' %
@@ -218,7 +240,8 @@ class CharmmPsfFile(object):
             )
         angle_list.changed = False
         # Now get the number of torsions and the torsion list
-        nphi, holder = CharmmPsfFile._parse_psf_section(psf, int)
+        nphi = conv(psfsections['NPHI'][0], int, 'number of torsions')
+        holder = psfsections['NPHI'][1]
         dihedral_list = TrackedList()
         if len(holder) != nphi * 4:
             raise CharmmPSFError('Got %d indexes for %d torsions' %
@@ -234,7 +257,8 @@ class CharmmPsfFile(object):
             )
         dihedral_list.changed = False
         # Now get the number of improper torsions
-        nimphi, holder = CharmmPsfFile._parse_psf_section(psf, int)
+        nimphi = conv(psfsections['NIMPHI'][0], int, 'number of impropers')
+        holder = psfsections['NIMPHI'][1]
         improper_list = TrackedList()
         if len(holder) != nimphi * 4:
             raise CharmmPSFError('Got %d indexes for %d impropers' %
@@ -250,7 +274,8 @@ class CharmmPsfFile(object):
             )
         improper_list.changed = False
         # Now handle the donors (what is this used for??)
-        ndon, holder = CharmmPsfFile._parse_psf_section(psf, int)
+        ndon = conv(psfsections['NDON'][0], int, 'number of donors')
+        holder = psfsections['NDON'][1]
         donor_list = TrackedList()
         if len(holder) != ndon * 2:
             raise CharmmPSFError('Got %d indexes for %d donors' %
@@ -261,7 +286,8 @@ class CharmmPsfFile(object):
             donor_list.append(AcceptorDonor(atom_list[id1], atom_list[id2]))
         donor_list.changed = False
         # Now handle the acceptors (what is this used for??)
-        nacc, holder = CharmmPsfFile._parse_psf_section(psf, int)
+        nacc = conv(psfsections['NACC'][0], int, 'number of acceptors')
+        holder = psfsections['NACC'][1]
         acceptor_list = TrackedList()
         if len(holder) != nacc * 2:
             raise CharmmPSFError('Got %d indexes for %d acceptors' %
@@ -271,16 +297,13 @@ class CharmmPsfFile(object):
             id2 = holder[2*i+1] - 1
             acceptor_list.append(AcceptorDonor(atom_list[id1], atom_list[id2]))
         acceptor_list.changed = False
-        # Now get the NNB section. Not sure what this section is for or what it
-        # does...
-        nnb, holder = CharmmPsfFile._parse_psf_section(psf, int)
         # Now get the group sections
-        pointers, holder = CharmmPsfFile._parse_psf_section(psf, int)
         group_list = TrackedList()
         try:
-            ngrp, nst2 = pointers
+            ngrp, nst2 = psfsections['NGRP NST2'][0]
         except ValueError:
             raise CharmmPSFError('Could not unpack GROUP pointers')
+        holder = psfsections['NGRP NST2'][1]
         group_list.nst2 = nst2
         # Now handle the groups
         if len(holder) != ngrp * 3:
@@ -292,19 +315,8 @@ class CharmmPsfFile(object):
             i3 = holder[3*i+2]
             group_list.append(Group(i1, i2, i3))
         group_list.changed = False
-        # The next section might be the number of molecules or it might be the
-        # cross-term (cmap) section. The first thing we'll do is determine
-        # molecularity based on the atom connectivity. If every PSF file was
-        # guaranteed to be "correct", we could just compare the MOLNT
-        # section with the one we compute here. However, CHARMM GUI appears
-        # to assign MOLNT as a dummy section (with all 1's), so this
-        # approach will not work. Instead, look at the value of the pointer
-        # and the number of entries in the group. If the # of entries is
-        # NATOM, assume we have MOLNT section. Warn if the MOLNT section is
-        # 'wrong'...
-        pointer, holder = CharmmPsfFile._parse_psf_section(psf, int)
-
         # Assign all of the atoms to molecules recursively
+        holder = psfsections['MOLNT'][1]
         set_molecules(atom_list)
         molecule_list = [atom.marked for atom in atom_list]
         if len(holder) == len(atom_list):
@@ -312,21 +324,14 @@ class CharmmPsfFile(object):
                 warnings.warn('Detected PSF molecule section that is WRONG. '
                               'Resetting molecularity.', CharmmPSFWarning)
             # We have a CHARMM PSF file; now do NUMLP/NUMLPH sections
-            words = psf.readline().split()
-            numlp = conv(words[0], int, 'numlp')
-            numlph = conv(words[1], int, 'numlph')
+            numlp, numlph = psfsections['NUMLP NUMLPH'][0]
             if numlp != 0 or numlph != 0:
                 raise NotImplemented('Cannot currently handle PSFs with lone '
                                      'pairs defined in the NUMLP/NUMLPH '
                                      'section.')
-            psf.readline() # blank
-            # Now we get to the cross-term section
-            ncrterm, holder = CharmmPsfFile._parse_psf_section(psf, int)
-        else:
-            ncrterm = pointer
-        # At this point, ncrterm and holder are both set to the CMAP list for
-        # VMD and non-VMD PSFs.
-        # Now get the cmaps
+        # Now do the CMAPs
+        ncrterm = conv(psfsections['NCRTERM'][0], int, 'Number of cross-terms')
+        holder = psfsections['NCRTERM'][1]
         cmap_list = TrackedList()
         if len(holder) != ncrterm * 8:
             raise CharmmPSFError('Got %d CMAP indexes for %d cmap terms' %
@@ -347,7 +352,6 @@ class CharmmPsfFile(object):
             )
         cmap_list.changed = False
 
-        # Now set the instance attributes
         self.residue_list = residue_list
         self.atom_list = atom_list
         self.bond_list = bond_list
@@ -381,18 +385,18 @@ class CharmmPsfFile(object):
             raise CharmmPSFError('Could not convert %s' % message)
 
     @staticmethod
-    def _parse_psf_section(psf, dtype):
+    def _parse_psf_section(psf):
         """
         This method parses a section of the PSF file
 
         Parameters:
             - psf (CharmmFile) : Open file that is pointing to the first line
                                  of the section that is to be parsed
-            - dtype (type) : The data type to convert all of the data into
         
         Returns:
-            (pointers, data)
-            
+            (title, pointers, data)
+
+            - title (str) : The label of the PSF section we are parsing
             - pointers (int/tuple of ints) : If one pointer is set, pointers is
                     simply the integer that is value of that pointer. Otherwise
                     it is a tuple with every pointer value defined in the first
@@ -401,22 +405,42 @@ class CharmmPsfFile(object):
                     to `dtype'
         """
         conv = CharmmPsfFile._convert
-        words = psf.readline().split()
+        line = psf.readline()
+        while not line.strip():
+            if not line:
+                raise CharmmPsfEOF('Unexpected EOF in PSF file')
+            else:
+                line = psf.readline()
+        if '!' in line:
+            words = line[:line.index('!')].split()
+            title = line[line.index('!')+1:].strip().upper()
+            # Strip out description
+            if ':' in title:
+                title = title[:title.index(':')]
+        else:
+            raise CharmmPSFError('Could not determine section title')
         if len(words) == 1:
             pointers = conv(words[0], int, 'pointer')
         else:
             pointers = tuple([conv(w, int, 'pointer') for w in words])
         line = psf.readline().strip()
-        if not line:
+        if not line and title.startswith('NNB'):
             # This will correctly handle the NNB section (which has a spurious
             # blank line) as well as any sections that have 0 members.
             line = psf.readline().strip()
         data = []
-        while line:
-            words = line.split()
-            data.extend([conv(w, dtype, 'PSF data') for w in words])
-            line = psf.readline().strip()
-        return pointers, data
+        if title == 'NATOM' or title == 'NTITLE':
+            # Store these two sections as strings (ATOM section we will parse
+            # later). The rest of the sections are integer pointers
+            while line:
+                data.append(line)
+                line = psf.readline().strip()
+        else:
+            while line:
+                words = line.split()
+                data.extend([conv(w, int, 'PSF data') for w in words])
+                line = psf.readline().strip()
+        return title, pointers, data
 
     def writePsf(self, dest, vmd=False):
         """
@@ -711,41 +735,6 @@ class CharmmPsfFile(object):
         # If the types started out as integers, change them back
         if types_are_int:
             for atom in self.atom_list: atom.type_to_int()
-
-    def setCoordinates(self, positions, velocities=None):
-        """
-        This method loads the coordinates and velocity information from an
-        external object or passed data.
-
-        Parameters:
-            - positions (list of floats) : A 3-N length iterable with all of the
-                coordinates in the order [x1, y1, z1, x2, y2, z2, ...].
-            - velocities (list of floats) : If not None, is the velocity
-                equivalent of the positions
-        """
-        if len(positions) / 3 != len(self.atom_list):
-            raise ValueError('Coordinates given for %s atoms, but %d atoms '
-                             'exist in this structure.' %
-                             (len(positions)/3, len(self.atom_list)))
-        # Now assign all of the atoms positions
-        for i, atom in enumerate(self.atom_list):
-            atom.xx = positions[3*i  ]
-            atom.xy = positions[3*i+1]
-            atom.xz = positions[3*i+2]
-
-        # Do velocities if given
-        if velocities is not None:
-            if len(velocities) / 3 != len(self.atom_list):
-                raise ValueError('Velocities given for %s atoms, but %d atoms '
-                                 'exist in this structure.' %
-                                 (len(velocities)/3, len(self.atom_list)))
-            for i, atom in enumerate(self.atom_list):
-                atom.vx = velocities[3*i  ]
-                atom.vy = velocities[3*i+1]
-                atom.vz = velocities[3*i+2]
-            self.velocities = velocities
-
-        self.positions = positions
 
     def setBox(self, a, b, c, alpha=90.0*u.degrees, beta=90.0*u.degrees,
                gamma=90.0*u.degrees):
@@ -1385,6 +1374,7 @@ class CharmmPsfFile(object):
         if implicitSolvent is not None:
             if verbose: print('Adding GB parameters...')
             gb_parms = self._get_gb_params(implicitSolvent)
+            gb_parms = convertParameters(gb_parms, str(implicitSolvent))
 
             # If implicitSolventKappa is None, compute it from salt
             # concentration
@@ -1478,52 +1468,6 @@ class CharmmPsfFile(object):
             raise AttributeError('You must initialize the system with '
                                  'createSystem before accessing the cached '
                                  'object.')
-
-    @property
-    def positions(self):
-        """
-        Return the cached positions or create new ones from the atoms
-        """
-        try:
-            if len(self._positions) == len(self.atom_list):
-                return self._positions
-        except AttributeError:
-            pass
-
-        self._positions = tuple([Vec3(a.xx, a.xy, a.xz)
-                               for a in self.atom_list]) * u.angstroms
-        return self._positions
-
-    @positions.setter
-    def positions(self, stuff):
-        """
-        Replace the cached positions and the positions of each atom. If no units
-        are applied to "stuff", it is assumed to be Angstroms.
-        """
-        if not u.is_quantity(stuff):
-            # Assume this is Angstroms
-            stuff *= u.angstroms
-
-        # If we got a 1-D array, reshape it into an natom list of Vec3's
-        if len(stuff) == len(self.atom_list) * 3:
-            stuff = [Vec3(stuff[i*3], stuff[i*3+1], stuff[i*3+2])
-                     for i in range(len(self.atom_list))]
-        self._positions = stuff
-        for atom, pos in zip(self.atom_list, stuff):
-            atom.xx, atom.xy, atom.xz = pos.value_in_unit(u.angstrom)
-
-    @property
-    def velocities(self):
-        """ Same as for positions, but for velocities """
-        try:
-            if len(self._velocities) == len(self.atom_list):
-                return self._velocities
-        except AttributeError:
-            pass
-
-        self._velocities = tuple([Vec3(a.vx, a.vy, a.vz)
-                    for a in self.atom_list]) * (u.angstroms/u.picosecond) 
-        return self._velocities
 
     @property
     def boxLengths(self):

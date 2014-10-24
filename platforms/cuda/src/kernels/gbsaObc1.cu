@@ -1,6 +1,5 @@
 #define DIELECTRIC_OFFSET 0.009f
 #define PROBE_RADIUS 0.14f
-#define SURFACE_AREA_FACTOR -170.351730667551f //-6.0f*3.14159265358979323846f*0.0216f*1000.0f*0.4184f;
 #define WARPS_PER_GROUP (FORCE_WORK_GROUP_SIZE/TILE_SIZE)
 
 /**
@@ -208,11 +207,11 @@ extern "C" __global__ void computeBornSum(unsigned long long* __restrict__ globa
 
 #ifdef USE_CUTOFF
     unsigned int numTiles = interactionCount[0];
-    int pos = warp*(numTiles > maxTiles ? NUM_BLOCKS*(NUM_BLOCKS+1)/2 : numTiles)/totalWarps;
-    int end = (warp+1)*(numTiles > maxTiles ? NUM_BLOCKS*(NUM_BLOCKS+1)/2 : numTiles)/totalWarps;
+    int pos = (int) (warp*(numTiles > maxTiles ? NUM_BLOCKS*((long long)NUM_BLOCKS+1)/2 : (long)numTiles)/totalWarps);
+    int end = (int) ((warp+1)*(numTiles > maxTiles ? NUM_BLOCKS*((long long)NUM_BLOCKS+1)/2 : (long)numTiles)/totalWarps);
 #else
-    int pos = warp*numTiles/totalWarps;
-    int end = (warp+1)*numTiles/totalWarps;
+    int pos = (int) (warp*(long long)numTiles/totalWarps);
+    int end = (int) ((warp+1)*(long long)numTiles/totalWarps);
 #endif
     int skipBase = 0;
     int currentSkipIndex = tbx;
@@ -572,11 +571,11 @@ extern "C" __global__ void computeGBSAForce1(unsigned long long* __restrict__ fo
 
 #ifdef USE_CUTOFF
     unsigned int numTiles = interactionCount[0];
-    int pos = warp*(numTiles > maxTiles ? NUM_BLOCKS*(NUM_BLOCKS+1)/2 : numTiles)/totalWarps;
-    int end = (warp+1)*(numTiles > maxTiles ? NUM_BLOCKS*(NUM_BLOCKS+1)/2 : numTiles)/totalWarps;
+    int pos = (int) (warp*(numTiles > maxTiles ? NUM_BLOCKS*((long long)NUM_BLOCKS+1)/2 : (long)numTiles)/totalWarps);
+    int end = (int) ((warp+1)*(numTiles > maxTiles ? NUM_BLOCKS*((long long)NUM_BLOCKS+1)/2 : (long)numTiles)/totalWarps);
 #else
-    int pos = warp*numTiles/totalWarps;
-    int end = (warp+1)*numTiles/totalWarps;
+    int pos = (int) (warp*(long long)numTiles/totalWarps);
+    int end = (int) ((warp+1)*(long long)numTiles/totalWarps);
 #endif
     int skipBase = 0;
     int currentSkipIndex = tbx;

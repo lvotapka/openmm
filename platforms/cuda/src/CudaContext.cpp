@@ -75,7 +75,7 @@ const int CudaContext::TileSize = sizeof(tileflags)*8;
 bool CudaContext::hasInitializedCuda = false;
 
 CudaContext::CudaContext(const System& system, int deviceIndex, bool useBlockingSync, const string& precision, const string& compiler,
-        const string& tempDir, const std::string& hostCompiler, CudaPlatform::PlatformData& platformData) : system(system),
+        const string& tempDir, const std::string& hostCompiler, CudaPlatform::PlatformData& platformData) : system(system), currentStream(0),
         time(0.0), platformData(platformData), stepCount(0), computeForceCount(0), stepsSinceReorder(99999), contextIsValid(false), atomsWereReordered(false), pinnedBuffer(NULL), posq(NULL),
         posqCorrection(NULL), velm(NULL), force(NULL), energyBuffer(NULL), integration(NULL), expression(NULL), bonded(NULL), nonbonded(NULL), thread(NULL) {
     this->compiler = "\""+compiler+"\"";
@@ -139,6 +139,11 @@ CudaContext::CudaContext(const System& system, int deviceIndex, bool useBlocking
     this->deviceIndex = deviceIndex;
     int major, minor;
     CHECK_RESULT(cuDeviceComputeCapability(&major, &minor, device));
+    // This is a workaround to support GTX 980 with CUDA 6.5.  It reports its compute capability
+    // as 5.2, but the compiler doesn't support anything beyond 5.0.  We can remove this once
+    // CUDA 7.0 is released.
+    if (major == 5)
+        minor = 0;
     gpuArchitecture = intToString(major)+intToString(minor);
     computeCapability = major+0.1*minor;
     if ((useDoublePrecision || useMixedPrecision) && computeCapability < 1.3)
@@ -152,6 +157,16 @@ CudaContext::CudaContext(const System& system, int deviceIndex, bool useBlocking
     CHECK_RESULT(cuCtxCreate(&context, flags, device));
     contextIsValid = true;
     CHECK_RESULT(cuCtxSetCacheConfig(CU_FUNC_CACHE_PREFER_SHARED));
+    if (contextIndex > 0) {
+        int canAccess;
+        cuDeviceCanAccessPeer(&canAccess, getDevice(), platformData.contexts[0]->getDevice());
+        if (canAccess) {
+            platformData.contexts[0]->setAsCurrent();
+            CHECK_RESULT(cuCtxEnablePeerAccess(getContext(), 0));
+            setAsCurrent();
+            CHECK_RESULT(cuCtxEnablePeerAccess(platformData.contexts[0]->getContext(), 0));
+        }
+    }
     numAtoms = system.getNumParticles();
     paddedNumAtoms = TileSize*((numAtoms+TileSize-1)/TileSize);
     numAtomBlocks = (paddedNumAtoms+(TileSize-1))/TileSize;
@@ -510,6 +525,18 @@ CUfunction CudaContext::getKernel(CUmodule& module, const string& name) {
     return function;
 }
 
+CUstream CudaContext::getCurrentStream() {
+    return currentStream;
+}
+
+void CudaContext::setCurrentStream(CUstream stream) {
+    currentStream = stream;
+}
+
+void CudaContext::restoreDefaultStream() {
+    setCurrentStream(0);
+}
+
 string CudaContext::doubleToString(double value) {
     stringstream s;
     s.precision(useDoublePrecision ? 16 : 8);
@@ -578,7 +605,7 @@ void CudaContext::executeKernel(CUfunction kernel, void** arguments, int threads
     if (blockSize == -1)
         blockSize = ThreadBlockSize;
     int gridSize = std::min((threads+blockSize-1)/blockSize, numThreadBlocks);
-    CUresult result = cuLaunchKernel(kernel, gridSize, 1, 1, blockSize, 1, 1, sharedSize, 0, arguments, NULL);
+    CUresult result = cuLaunchKernel(kernel, gridSize, 1, 1, blockSize, 1, 1, sharedSize, currentStream, arguments, NULL);
     if (result != CUDA_SUCCESS) {
         stringstream str;
         str<<"Error invoking kernel: "<<getErrorString(result)<<" ("<<result<<")";
