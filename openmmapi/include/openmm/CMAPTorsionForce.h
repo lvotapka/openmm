@@ -9,7 +9,7 @@
  * Biological Structures at Stanford, funded under the NIH Roadmap for        *
  * Medical Research, grant U54 GM072970. See https://simtk.org.               *
  *                                                                            *
- * Portions copyright (c) 2010 Stanford University and the Authors.           *
+ * Portions copyright (c) 2010-2016 Stanford University and the Authors.      *
  * Authors: Peter Eastman                                                     *
  * Contributors:                                                              *
  *                                                                            *
@@ -84,12 +84,12 @@ public:
     /**
      * Get the energy values of a map.
      *
-     * @param index   the index of the map for which to get energy values
-     * @param size    the size of the map along each dimension
-     * @param energy  the energy values for the map.  This must be of length size*size.
-     *                The element energy[i+size*j] contains the energy when the first
-     *                torsion angle equals i*2*PI/size and the second torsion angle
-     *                equals j*2*PI/size.
+     * @param index        the index of the map for which to get energy values
+     * @param[out] size    the size of the map along each dimension
+     * @param[out] energy  the energy values for the map.  This must be of length size*size.
+     *                     The element energy[i+size*j] contains the energy when the first
+     *                     torsion angle equals i*2*PI/size and the second torsion angle
+     *                     equals j*2*PI/size.
      */
     void getMapParameters(int index, int& size, std::vector<double>& energy) const;
     /**
@@ -121,16 +121,16 @@ public:
     /**
      * Get the force field parameters for a CMAP torsion term.
      *
-     * @param index the index of the torsion for which to get parameters
-     * @param map   the index of the map to use for this term
-     * @param a1    the index of the first particle forming the first torsion
-     * @param a2    the index of the second particle forming the first torsion
-     * @param a3    the index of the third particle forming the first torsion
-     * @param a4    the index of the fourth particle forming the first torsion
-     * @param b1    the index of the first particle forming the second torsion
-     * @param b2    the index of the second particle forming the second torsion
-     * @param b3    the index of the third particle forming the second torsion
-     * @param b4    the index of the fourth particle forming the second torsion
+     * @param index      the index of the torsion for which to get parameters
+     * @param[out] map   the index of the map to use for this term
+     * @param[out] a1    the index of the first particle forming the first torsion
+     * @param[out] a2    the index of the second particle forming the first torsion
+     * @param[out] a3    the index of the third particle forming the first torsion
+     * @param[out] a4    the index of the fourth particle forming the first torsion
+     * @param[out] b1    the index of the first particle forming the second torsion
+     * @param[out] b2    the index of the second particle forming the second torsion
+     * @param[out] b3    the index of the third particle forming the second torsion
+     * @param[out] b4    the index of the fourth particle forming the second torsion
      */
     void getTorsionParameters(int index, int& map, int& a1, int& a2, int& a3, int& a4, int& b1, int& b2, int& b3, int& b4) const;
     /**
@@ -148,6 +148,29 @@ public:
      * @param b4    the index of the fourth particle forming the second torsion
      */
     void setTorsionParameters(int index, int map, int a1, int a2, int a3, int a4, int b1, int b2, int b3, int b4);
+    /**
+     * Update the map and torsion parameters in a Context to match those stored in this Force object.  This method provides
+     * an efficient method to update certain parameters in an existing Context without needing to reinitialize it.
+     * Simply call setMapParameters() and setTorsionParameters() to modify this object's parameters, then call updateParametersInContext()
+     * to copy them over to the Context.
+     *
+     * The only information that can be updated with this method is the energy values for a map, and the map index
+     * for a torsion.  The size of a map and the set of particles involved in a torsion cannot be changed.  Also,
+     * new bonds and torsions cannot be added.
+     */
+    void updateParametersInContext(Context& context);
+    /**
+     * Set whether this force should apply periodic boundary conditions when calculating displacements.
+     * Usually this is not appropriate for bonded forces, but there are situations when it can be useful.
+     */
+    void setUsesPeriodicBoundaryConditions(bool periodic);
+    /**
+     * Returns whether or not this force makes use of periodic boundary
+     * conditions.
+     *
+     * @returns true if force uses PBC and false otherwise
+     */
+    bool usesPeriodicBoundaryConditions() const;
 protected:
     ForceImpl* createImpl() const;
 private:
@@ -155,6 +178,7 @@ private:
     class CMAPTorsionInfo;
     std::vector<MapInfo> maps;
     std::vector<CMAPTorsionInfo> torsions;
+    bool usePeriodic;
 };
 
 /**

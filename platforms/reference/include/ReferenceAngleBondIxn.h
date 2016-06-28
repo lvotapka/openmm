@@ -27,11 +27,14 @@
 
 #include "ReferenceBondIxn.h"
 
-// ---------------------------------------------------------------------------------------
+namespace OpenMM {
 
-class ReferenceAngleBondIxn : public ReferenceBondIxn {
+class OPENMM_EXPORT ReferenceAngleBondIxn : public ReferenceBondIxn {
 
    private:
+
+        bool usePeriodic;
+        RealVec boxVectors[3];
 
    public:
 
@@ -41,7 +44,7 @@ class ReferenceAngleBondIxn : public ReferenceBondIxn {
       
          --------------------------------------------------------------------------------------- */
 
-       ReferenceAngleBondIxn( );
+       ReferenceAngleBondIxn();
 
       /**---------------------------------------------------------------------------------------
       
@@ -49,7 +52,17 @@ class ReferenceAngleBondIxn : public ReferenceBondIxn {
       
          --------------------------------------------------------------------------------------- */
 
-       ~ReferenceAngleBondIxn( );
+       ~ReferenceAngleBondIxn();
+
+       /**---------------------------------------------------------------------------------------
+      
+         Set the force to use periodic boundary conditions.
+      
+         @param vectors    the vectors defining the periodic box
+      
+         --------------------------------------------------------------------------------------- */
+      
+      void setPeriodic(OpenMM::RealVec* vectors);
 
       /**---------------------------------------------------------------------------------------
 
@@ -63,8 +76,8 @@ class ReferenceAngleBondIxn : public ReferenceBondIxn {
       
          --------------------------------------------------------------------------------------- */
       
-      void getPrefactorsGivenAngleCosine( RealOpenMM cosine, RealOpenMM* angleParameters,
-                                         RealOpenMM* dEdR, RealOpenMM* energyTerm ) const;
+      void getPrefactorsGivenAngleCosine(RealOpenMM cosine, RealOpenMM* angleParameters,
+                                         RealOpenMM* dEdR, RealOpenMM* energyTerm) const;
       
       /**---------------------------------------------------------------------------------------
 
@@ -79,13 +92,13 @@ class ReferenceAngleBondIxn : public ReferenceBondIxn {
       
          --------------------------------------------------------------------------------------- */
       
-      void calculateBondIxn( int* atomIndices, std::vector<OpenMM::RealVec>& atomCoordinates,
+      void calculateBondIxn(int* atomIndices, std::vector<OpenMM::RealVec>& atomCoordinates,
                             RealOpenMM* parameters, std::vector<OpenMM::RealVec>& forces,
-                            RealOpenMM* totalEnergy ) const;
+                            RealOpenMM* totalEnergy) const;
       
 
 };
 
-// ---------------------------------------------------------------------------------------
+} // namespace OpenMM
 
 #endif // __ReferenceAngleBondIxn_H__

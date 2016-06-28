@@ -2,13 +2,20 @@
 
 try:
     import numpy
-except:
-    pass
+except ImportError:
+    numpy = None
 
+import copy
 import sys
 import math
+import functools
+import operator
 RMIN_PER_SIGMA=math.pow(2, 1/6.0)
 RVDW_PER_SIGMA=math.pow(2, 1/6.0)/2.0
+if sys.version_info[0] == 2:
+    _string_types = (basestring,)
+else:
+    _string_types = (bytes, str)
 
 import simtk.unit as unit
 from simtk.openmm.vec3 import Vec3
@@ -19,7 +26,7 @@ class State(_object):
      current state of a simulation at a point
      in time.  You create it by calling
      getState() on a Context.
-     
+
      When a State is created, you specify what
      information should be stored in it.  This
      saves time and memory by only copying in
@@ -79,7 +86,6 @@ class State(_object):
         return serializationString
 
     def __setstate__(self, serializationString):
-        print 'calling set state'
         dState = XmlSerializer.deserialize(serializationString)
         # Safe provided no __slots__ or other weird things are used
         self.__dict__.update(dState.__dict__)
@@ -104,7 +110,7 @@ class State(_object):
 
         returnValue = unit.Quantity(returnValue, unit.nanometers)
         return returnValue
-    
+
     def getPeriodicBoxVolume(self):
         """Get the volume of the periodic box."""
         a = self._periodicBoxVectorsList[0]
@@ -215,92 +221,76 @@ class State(_object):
             raise TypeError('Parameters were not requested in getState() call, so are not available.')
         return self._paramMap
 
-
-# Strings can cause trouble
-# as can any container that has infinite levels of containment
-def _is_string(x):
-    # step 1) String is always a container
-    # and its contents are themselves containers.
-    try:
-        first_item = iter(x).next()
-        inner_item = iter(first_item).next()
-        if first_item == inner_item:
-            return True
-        else:
-            return False
-    except TypeError:
-        return False
-    except StopIteration:
-        return False
-    except ValueError:
-        return False
-
-def stripUnits(args):
-    """
-    getState(self, quantity) 
-          -> value with *no* units
-
-    Examples
-    >>> import simtk
-
-    >>> x = 5
-    >>> print x
-    5
-
-    >>> x = stripUnits((5*simtk.unit.nanometer,))
-    >>> x
-    (5,)
-
-    >>> arg1 = 5*simtk.unit.angstrom
-    >>> x = stripUnits((arg1,))
-    >>> x
-    (0.5,)
-
-    >>> arg1 = 5
-    >>> x = stripUnits((arg1,))
-    >>> x
-    (5,)
-
-    >>> arg1 = (1*simtk.unit.angstrom, 5*simtk.unit.angstrom)
-    >>> x = stripUnits((arg1,))
-    >>> x
-    ((0.10000000000000001, 0.5),)
-
-    >>> arg1 = (1*simtk.unit.angstrom,
-    ...         5*simtk.unit.kilojoule_per_mole,
-    ...         1*simtk.unit.kilocalorie_per_mole)
-    >>> y = stripUnits((arg1,))
-    >>> y
-    ((0.10000000000000001, 5, 4.1840000000000002),)
-
-    """
-    newArgList=[]
-    for arg in args:
-        if 'numpy' in sys.modules and isinstance(arg, numpy.ndarray):
-           arg = arg.tolist()
-        elif unit.is_quantity(arg):
-            # JDC: Ugly workaround for OpenMM using 'bar' for fundamental pressure unit.
-            if arg.unit.is_compatible(unit.bar):
-                arg = arg / unit.bar
-            else:
-                arg=arg.value_in_unit_system(unit.md_unit_system)                
-            # JDC: End workaround.
-        elif isinstance(arg, dict):
-            newKeys = stripUnits(arg.keys())
-            newValues = stripUnits(arg.values())
-            arg = dict(zip(newKeys, newValues))
-        elif not _is_string(arg):
-            try:
-                iter(arg)
-                # Reclusively strip units from all quantities
-                arg=stripUnits(arg)
-            except TypeError:
-                pass
-        newArgList.append(arg)
-    return tuple(newArgList)
 %}
 
 %pythonappend OpenMM::Context::Context %{
     self._system = args[0]
     self._integrator = args[1]
+%}
+
+%pythonprepend OpenMM::AmoebaAngleForce::addAngle %{
+    try:
+        length = args[3]
+        if isinstance(args, tuple):
+            args = list(args)
+    except (NameError, UnboundLocalError):
+        if unit.is_quantity(length):
+            length = length.value_in_unit(unit.degree)
+    else:
+        if unit.is_quantity(length):
+            args[3] = length.value_in_unit(unit.degree)
+%}
+
+%pythonprepend OpenMM::AmoebaAngleForce::setAngleParameters %{
+    try:
+        length = args[4]
+        if isinstance(args, tuple):
+            args = list(args)
+    except (NameError, UnboundLocalError):
+        if unit.is_quantity(length):
+            length = length.value_in_unit(unit.degree)
+    else:
+        if unit.is_quantity(length):
+            args[4] = length.value_in_unit(unit.degree)
+%}
+
+%pythonprepend OpenMM::AmoebaTorsionTorsionForce::setTorsionTorsionGrid %{
+    def deunitize_grid(grid):
+        if isinstance(grid, tuple):
+            grid = list(grid)
+        for i, row in enumerate(grid):
+            if isinstance(row, tuple):
+                row = list(row)
+                grid[i] = row
+            for i, column in enumerate(row):
+                if isinstance(column, tuple):
+                    column = list(column)
+                    row[i] = column
+                # Data is angle, angle, energy, de/dang1, de/dang2, d^2e/dang1dang2
+                if unit.is_quantity(column[0]):
+                    column[0] = column[0].value_in_unit(unit.degree)
+                if unit.is_quantity(column[1]):
+                    column[1] = column[1].value_in_unit(unit.degree)
+                if unit.is_quantity(column[2]):
+                    column[2] = column[2].value_in_unit(unit.kilojoule_per_mole)
+                if len(column) > 3 and unit.is_quantity(column[3]):
+                    column[3] = column[3].value_in_unit(unit.kilojoule_per_mole/unit.radians)
+                if len(column) > 4 and unit.is_quantity(column[4]):
+                    column[4] = column[4].value_in_unit(unit.kilojoule_per_mole/unit.radians)
+                if len(column) > 5 and unit.is_quantity(column[5]):
+                    column[5] = column[5].value_in_unit(unit.kilojoule_per_mole/unit.radians**2)
+        return grid
+    try:
+        grid = copy.deepcopy(args[1])
+        if isinstance(args, tuple):
+            args = list(args)
+    except (NameError, UnboundLocalError):
+        try:
+            # Support numpy arrays
+            grid = grid.tolist()
+        except AttributeError:
+            grid = copy.deepcopy(grid)
+        grid = deunitize_grid(grid)
+    else:
+        args[1] = deunitize_grid(grid)
 %}

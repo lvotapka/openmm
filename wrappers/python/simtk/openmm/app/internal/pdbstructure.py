@@ -1,5 +1,3 @@
-#!/bin/env python
-
 """
 pdbstructure.py: Used for managing PDB formated files.
 
@@ -8,7 +6,7 @@ Simbios, the NIH National Center for Physics-Based Simulation of
 Biological Structures at Stanford, funded under the NIH Roadmap for
 Medical Research, grant U54 GM072970. See https://simtk.org.
 
-Portions copyright (c) 2012-2013 Stanford University and the Authors.
+Portions copyright (c) 2012-2015 Stanford University and the Authors.
 Authors: Christopher M. Bruns
 Contributors: Peter Eastman
 
@@ -30,6 +28,8 @@ DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
 OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
+from __future__ import absolute_import
+from __future__ import print_function
 __author__ = "Christopher M. Bruns"
 __version__ = "1.0"
 
@@ -37,8 +37,10 @@ __version__ = "1.0"
 from simtk.openmm.vec3 import Vec3
 import simtk.unit as unit
 from .. import element
+from .unitcell import computePeriodicBoxVectors
 import warnings
 import sys
+import math
 
 class PdbStructure(object):
     """
@@ -121,23 +123,29 @@ class PdbStructure(object):
     """
 
 
-    def __init__(self, input_stream, load_all_models = False):
+    def __init__(self, input_stream, load_all_models=False, extraParticleIdentifier='EP'):
         """Create a PDB model from a PDB file stream.
 
-        Parameters:
-         - self (PdbStructure) The new object that is created.
-         - input_stream (stream) An input file stream, probably created with
-             open().
-         - load_all_models (bool) Whether to load every model of an NMR
-             structure or trajectory, or just load the first model, to save memory.
+        Parameters
+        ----------
+        self : PdbStructure
+            The new object that is created.
+        input_stream : stream
+            An input file stream, probably created with open().
+        load_all_models : bool
+            Whether to load every model of an NMR structure or trajectory, or
+            just load the first model, to save memory.
+        extraParticleIdentifier : string='EP'
+            if this value appears in the element column for an ATOM record, the Atom's element will be set to 'EP' to mark it as an extra particle
         """
         # initialize models
         self.load_all_models = load_all_models
+        self.extraParticleIdentifier = extraParticleIdentifier
         self.models = []
         self._current_model = None
         self.default_model = None
         self.models_by_number = {}
-        self._unit_cell_dimensions = None
+        self._periodic_box_vectors = None
         self.sequences = []
         self.modified_residues = []
         # read file
@@ -148,9 +156,11 @@ class PdbStructure(object):
         self._reset_residue_numbers()
         # Read one line at a time
         for pdb_line in input_stream:
+            if not isinstance(pdb_line, str):
+                pdb_line = pdb_line.decode('utf-8')
             # Look for atoms
             if (pdb_line.find("ATOM  ") == 0) or (pdb_line.find("HETATM") == 0):
-                self._add_atom(Atom(pdb_line, self))
+                self._add_atom(Atom(pdb_line, self, self.extraParticleIdentifier))
             # Notice MODEL punctuation, for the next level of detail
             # in the structure->model->chain->residue->atom->position hierarchy
             elif (pdb_line.find("MODEL") == 0):
@@ -170,7 +180,13 @@ class PdbStructure(object):
                 self._current_model._current_chain._add_ter_record()
                 self._reset_residue_numbers()
             elif (pdb_line.find("CRYST1") == 0):
-                self._unit_cell_dimensions = Vec3(float(pdb_line[6:15]), float(pdb_line[15:24]), float(pdb_line[24:33]))*unit.angstroms
+                a_length = float(pdb_line[6:15])*0.1
+                b_length = float(pdb_line[15:24])*0.1
+                c_length = float(pdb_line[24:33])*0.1
+                alpha = float(pdb_line[33:40])*math.pi/180.0
+                beta = float(pdb_line[40:47])*math.pi/180.0
+                gamma = float(pdb_line[47:54])*math.pi/180.0
+                self._periodic_box_vectors = computePeriodicBoxVectors(a_length, b_length, c_length, alpha, beta, gamma)
             elif (pdb_line.find("CONECT") == 0):
                 atoms = [int(pdb_line[6:11])]
                 for pos in (11,16,21,26):
@@ -187,11 +203,11 @@ class PdbStructure(object):
             elif (pdb_line.find("MODRES") == 0):
                 self.modified_residues.append(ModifiedResidue(pdb_line[16], int(pdb_line[18:22]), pdb_line[12:15].strip(), pdb_line[24:27].strip()))
         self._finalize()
-    
+
     def _reset_atom_numbers(self):
         self._atom_numbers_are_hex = False
         self._next_atom_number = 1
-    
+
     def _reset_residue_numbers(self):
         self._residue_numbers_are_hex = False
         self._next_residue_number = 1
@@ -202,11 +218,11 @@ class PdbStructure(object):
             if len(model.chains) == 0:
                 continue
             if len(self.models) > 1:
-                print >>output_stream, "MODEL     %4d" % (model.number)
+                print("MODEL     %4d" % (model.number), file=output_stream)
             model.write(output_stream)
             if len(self.models) > 1:
-                print >>output_stream, "ENDMDL"
-        print >>output_stream, "END"
+                print("ENDMDL", file=output_stream)
+        print("END", file=output_stream)
 
     def _add_model(self, model):
         if self.default_model == None:
@@ -259,8 +275,11 @@ class PdbStructure(object):
         Iterate over atomic positions.
 
         Parameters
-         - use_all_models (bool=False) Get positions from all models or just the first one.
-         - include_alt_loc (bool=False) Get all positions for each atom, or just the first one.
+        ----------
+        use_all_models : bool=False
+            Get positions from all models or just the first one.
+        include_alt_loc : bool=False
+            Get all positions for each atom, or just the first one.
         """
         for model in self.iter_models(use_all_models):
             for loc in model.iter_positions(include_alt_loc):
@@ -283,9 +302,9 @@ class PdbStructure(object):
         for model in self.models:
             model._finalize()
 
-    def get_unit_cell_dimensions(self):
-        """Get the dimensions of the crystallographic unit cell (may be None)."""
-        return self._unit_cell_dimensions
+    def get_periodic_box_vectors(self):
+        """Get the vectors defining the crystallographic unit cell (may be None)."""
+        return self._periodic_box_vectors
 
 
 class Sequence(object):
@@ -441,7 +460,7 @@ class Chain(object):
             residue.write(next_serial_number, output_stream)
         if self.has_ter_record:
             r = self.residues[-1]
-            print >>output_stream, "TER   %5d      %3s %1s%4d%1s" % (next_serial_number.val, r.name_with_spaces, self.chain_id, r.number, r.insertion_code)
+            print("TER   %5d      %3s %1s%4d%1s" % (next_serial_number.val, r.name_with_spaces, self.chain_id, r.number, r.insertion_code), file=output_stream)
             next_serial_number.increment()
 
     def _add_ter_record(self):
@@ -505,7 +524,7 @@ class Residue(object):
         """
         """
         alt_loc = atom.alternate_location_indicator
-        if not self.locations.has_key(alt_loc):
+        if alt_loc not in self.locations:
             self.locations[alt_loc] = Residue.Location(alt_loc, atom.residue_name_with_spaces)
         assert atom.residue_number == self.number
         assert atom.insertion_code == self.insertion_code
@@ -666,7 +685,7 @@ class Residue(object):
 class Atom(object):
     """Atom represents one atom in a PDB structure.
     """
-    def __init__(self, pdb_line, pdbstructure=None):
+    def __init__(self, pdb_line, pdbstructure=None, extraParticleIdentifier='EP'):
         """Create a new pdb.Atom from an ATOM or HETATM line.
 
         Example line:
@@ -701,7 +720,7 @@ class Atom(object):
         self.is_first_atom_in_chain = False
         self.is_final_atom_in_chain = False
         self.is_first_residue_in_chain = False
-        self.is_final_residue_in_chain = False 
+        self.is_final_residue_in_chain = False
         # Start parsing fields from pdb line
         self.record_name = pdb_line[0:6].strip()
         if pdbstructure is not None and pdbstructure._atom_numbers_are_hex:
@@ -779,11 +798,14 @@ class Atom(object):
         try: self.formal_charge = int(pdb_line[78:80])
         except ValueError: self.formal_charge = None
         # figure out atom element
-        try:
-            # Try to find a sensible element symbol from columns 76-77
-            self.element = element.get_by_symbol(self.element_symbol)
-        except KeyError:
-            self.element = None
+        if self.element_symbol == extraParticleIdentifier:
+            self.element = 'EP'
+        else:
+            try:
+                # Try to find a sensible element symbol from columns 76-77
+                self.element = element.get_by_symbol(self.element_symbol)
+            except KeyError:    
+                self.element = None
         if pdbstructure is not None:
             pdbstructure._next_atom_number = self.serial_number+1
             pdbstructure._next_residue_number = self.residue_number+1
@@ -914,7 +936,7 @@ class Atom(object):
         else:
             locs = list(alt_loc)
         for loc_id in locs:
-            print >>output_stream, self._pdb_string(next_serial_number.val, loc_id)
+            print(self._pdb_string(next_serial_number.val, loc_id), file=output_stream)
             next_serial_number.increment()
 
     def set_name_with_spaces(self, name):
@@ -1015,7 +1037,7 @@ if __name__=='__main__':
 
     def parse_one_pdb(pdb_file_name):
         global atom_count, residue_count, chain_count, model_count, structure_count
-        print pdb_file_name
+        print(pdb_file_name)
         if pdb_file_name[-3:] == ".gz":
             fh = gzip.open(pdb_file_name)
         else:
@@ -1073,10 +1095,10 @@ if __name__=='__main__':
         seconds = elapsed % 60
         hours = minutes / 60
         minutes = minutes % 60
-        print "%dh:%02dm:%02ds elapsed" % (hours, minutes, seconds)
+        print("%dh:%02dm:%02ds elapsed" % (hours, minutes, seconds))
 
-        print "%d atoms found" % atom_count
-        print "%d residues found" % residue_count
-        print "%d chains found" % chain_count
-        print "%d models found" % model_count
-        print "%d structures found" % structure_count
+        print("%d atoms found" % atom_count)
+        print("%d residues found" % residue_count)
+        print("%d chains found" % chain_count)
+        print("%d models found" % model_count)
+        print("%d structures found" % structure_count)

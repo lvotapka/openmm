@@ -9,7 +9,7 @@
  * Biological Structures at Stanford, funded under the NIH Roadmap for        *
  * Medical Research, grant U54 GM072970. See https://simtk.org.               *
  *                                                                            *
- * Portions copyright (c) 2008-2014 Stanford University and the Authors.      *
+ * Portions copyright (c) 2008-2016 Stanford University and the Authors.      *
  * Authors: Peter Eastman                                                     *
  * Contributors:                                                              *
  *                                                                            *
@@ -46,11 +46,11 @@ namespace OpenMM {
  * the energy depends on their positions, is configurable.  It may depend on the positions of individual particles,
  * the distances between pairs of particles, the angles formed by sets of three particles, and the dihedral
  * angles formed by sets of four particles.
- * 
+ *
  * We refer to the particles in a bond as p1, p2, p3, etc.  For each bond, CustomCompoundBondForce evaluates a
  * user supplied algebraic expression to determine the interaction energy.  The expression may depend on the
  * following variables and functions:
- * 
+ *
  * <ul>
  * <li>x1, y1, z1, x2, y2, z2, etc.: The x, y, and z coordinates of the particle positions.  For example, x1
  * is the x coordinate of particle p1, and y3 is the y coordinate of particle p3.</li>
@@ -89,8 +89,9 @@ namespace OpenMM {
  * </pre></tt>
  *
  * Expressions may involve the operators + (add), - (subtract), * (multiply), / (divide), and ^ (power), and the following
- * functions: sqrt, exp, log, sin, cos, sec, csc, tan, cot, asin, acos, atan, sinh, cosh, tanh, erf, erfc, min, max, abs, step, delta.  All trigonometric functions
+ * functions: sqrt, exp, log, sin, cos, sec, csc, tan, cot, asin, acos, atan, sinh, cosh, tanh, erf, erfc, min, max, abs, floor, ceil, step, delta, select.  All trigonometric functions
  * are defined in radians, and log is the natural logarithm.  step(x) = 0 if x is less than 0, 1 otherwise.  delta(x) = 1 if x is 0, 0 otherwise.
+ * select(x,y,z) = z if x = 0, y otherwise.
  *
  * In addition, you can call addTabulatedFunction() to define a new function based on tabulated values.  You specify the function by
  * creating a TabulatedFunction object.  That function can then appear in the expression.
@@ -140,7 +141,7 @@ public:
     }
     /**
      * Get the number of tabulated functions that have been defined.
-     * 
+     *
      * @deprecated This method exists only for backward compatibility.  Use getNumTabulatedFunctions() instead.
      */
     int getNumFunctions() const {
@@ -208,7 +209,7 @@ public:
      * Set the default value of a global parameter.
      *
      * @param index          the index of the parameter for which to set the default value
-     * @param name           the default value of the parameter
+     * @param defaultValue   the default value of the parameter
      */
     void setGlobalParameterDefaultValue(int index, double defaultValue);
     /**
@@ -218,23 +219,23 @@ public:
      * @param parameters  the list of per-bond parameter values for the new bond
      * @return the index of the bond that was added
      */
-    int addBond(const std::vector<int>& particles, const std::vector<double>& parameters);
+    int addBond(const std::vector<int>& particles, const std::vector<double>& parameters=std::vector<double>());
     /**
      * Get the properties of a bond.
      *
-     * @param index       the index of the bond to get
-     * @param particles   the indices of the particles in the bond
-     * @param parameters  the list of per-bond parameter values for the bond
+     * @param index            the index of the bond to get
+     * @param[out] particles   the indices of the particles in the bond
+     * @param[out] parameters  the list of per-bond parameter values for the bond
      */
     void getBondParameters(int index, std::vector<int>& particles, std::vector<double>& parameters) const;
     /**
      * Set the properties of a bond.
      *
-     * @param index       the index of the bond group to set
+     * @param index       the index of the bond to set
      * @param particles   the indices of the particles in the bond
      * @param parameters  the list of per-bond parameter values for the bond
      */
-    void setBondParameters(int index, const std::vector<int>& particles, const std::vector<double>& parameters);
+    void setBondParameters(int index, const std::vector<int>& particles, const std::vector<double>& parameters=std::vector<double>());
     /**
      * Add a tabulated function that may appear in the energy expression.
      *
@@ -289,14 +290,26 @@ public:
     /**
      * Update the per-bond parameters in a Context to match those stored in this Force object.  This method provides
      * an efficient method to update certain parameters in an existing Context without needing to reinitialize it.
-     * Simply call setBondParameters() to modify this object's parameters, then call updateParametersInState()
+     * Simply call setBondParameters() to modify this object's parameters, then call updateParametersInContext()
      * to copy them over to the Context.
-     * 
+     *
      * This method has several limitations.  The only information it updates is the values of per-bond parameters.
      * All other aspects of the Force (such as the energy function) are unaffected and can only be changed by reinitializing
      * the Context.  The set of particles involved in a bond cannot be changed, nor can new bonds be added.
      */
     void updateParametersInContext(Context& context);
+    /**
+     * Set whether this force should apply periodic boundary conditions when calculating displacements.
+     * Usually this is not appropriate for bonded forces, but there are situations when it can be useful.
+     */
+    void setUsesPeriodicBoundaryConditions(bool periodic);
+    /**
+     * Returns whether or not this force makes use of periodic boundary
+     * conditions.
+     *
+     * @returns true if force uses PBC and false otherwise
+     */
+    bool usesPeriodicBoundaryConditions() const;
 protected:
     ForceImpl* createImpl() const;
 private:
@@ -310,10 +323,11 @@ private:
     std::vector<GlobalParameterInfo> globalParameters;
     std::vector<BondInfo> bonds;
     std::vector<FunctionInfo> functions;
+    bool usePeriodic;
 };
 
 /**
- * This is an internal class used to record information about a bond or acceptor.
+ * This is an internal class used to record information about a bond.
  * @private
  */
 class CustomCompoundBondForce::BondInfo {
@@ -328,7 +342,7 @@ public:
 };
 
 /**
- * This is an internal class used to record information about a per-bond or per-acceptor parameter.
+ * This is an internal class used to record information about a per-bond parameter.
  * @private
  */
 class CustomCompoundBondForce::BondParameterInfo {

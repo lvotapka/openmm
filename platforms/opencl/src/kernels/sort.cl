@@ -49,7 +49,8 @@ __kernel void sortShortList(__global DATA_TYPE* __restrict__ data, uint length, 
  * Calculate the minimum and maximum value in the array to be sorted.  This kernel
  * is executed as a single work group.
  */
-__kernel void computeRange(__global const DATA_TYPE* restrict data, uint length, __global KEY_TYPE* restrict range, __local KEY_TYPE* restrict buffer) {
+__kernel void computeRange(__global const DATA_TYPE* restrict data, uint length, __global KEY_TYPE* restrict range, __local KEY_TYPE* restrict buffer,
+        uint numBuckets, __global uint* restrict bucketOffset) {
     KEY_TYPE minimum = MAX_KEY;
     KEY_TYPE maximum = MIN_KEY;
 
@@ -84,6 +85,11 @@ __kernel void computeRange(__global const DATA_TYPE* restrict data, uint length,
         range[0] = minimum;
         range[1] = maximum;
     }
+    
+    // Clear the bucket counters in preparation for the next kernel.
+
+    for (uint index = get_local_id(0); index < numBuckets; index += get_local_size(0))
+        bucketOffset[index] = 0;
 }
 
 /**
@@ -103,13 +109,7 @@ __kernel void assignElementsToBuckets(__global const DATA_TYPE* restrict data, u
     float maxValue = (float) (range[1]);
     float bucketWidth = (maxValue-minValue)/numBuckets;
     for (uint index = get_global_id(0); index < length; index += get_global_size(0)) {
-#if defined(MAC_AMD_WORKAROUND) && VALUE_IS_INT2
-        __global int* d = (__global int*) data;
-        int2 element = (int2) (d[2*index], d[2*index+1]);
-        float key = (float) getValue(element);
-#else
         float key = (float) getValue(data[index]);
-#endif
         uint bucketIndex = min((uint) ((key-minValue)/bucketWidth), numBuckets-1);
         offsetInBucket[index] = atom_inc(&bucketOffset[bucketIndex]);
         bucketOfElement[index] = bucketIndex;

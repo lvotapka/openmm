@@ -1,5 +1,5 @@
 
-/* Portions copyright (c) 2006 Stanford University and Simbios.
+/* Portions copyright (c) 2006-2016 Stanford University and Simbios.
  * Contributors: Pande Group
  *
  * Permission is hereby granted, free of charge, to any person obtaining
@@ -27,12 +27,15 @@
 
 #include "ReferenceBondIxn.h"
 
-// ---------------------------------------------------------------------------------------
+namespace OpenMM {
 
 class OPENMM_EXPORT ReferenceRbDihedralBond : public ReferenceBondIxn {
 
    private:
 
+        bool usePeriodic;
+        RealVec boxVectors[3];
+       
    public:
 
       /**---------------------------------------------------------------------------------------
@@ -41,7 +44,7 @@ class OPENMM_EXPORT ReferenceRbDihedralBond : public ReferenceBondIxn {
       
          --------------------------------------------------------------------------------------- */
 
-       ReferenceRbDihedralBond( );
+       ReferenceRbDihedralBond();
 
       /**---------------------------------------------------------------------------------------
       
@@ -49,7 +52,17 @@ class OPENMM_EXPORT ReferenceRbDihedralBond : public ReferenceBondIxn {
       
          --------------------------------------------------------------------------------------- */
 
-       ~ReferenceRbDihedralBond( );
+       ~ReferenceRbDihedralBond();
+
+       /**---------------------------------------------------------------------------------------
+      
+         Set the force to use periodic boundary conditions.
+      
+         @param vectors    the vectors defining the periodic box
+      
+         --------------------------------------------------------------------------------------- */
+      
+       void setPeriodic(OpenMM::RealVec* vectors);
 
       /**---------------------------------------------------------------------------------------
       
@@ -63,12 +76,12 @@ class OPENMM_EXPORT ReferenceRbDihedralBond : public ReferenceBondIxn {
             
          --------------------------------------------------------------------------------------- */
       
-      void calculateBondIxn( int* atomIndices, std::vector<OpenMM::RealVec>& atomCoordinates,
+      void calculateBondIxn(int* atomIndices, std::vector<OpenMM::RealVec>& atomCoordinates,
                             RealOpenMM* parameters, std::vector<OpenMM::RealVec>& forces,
-                            RealOpenMM* totalEnergy ) const;
+                            RealOpenMM* totalEnergy) const;
 
 };
 
-// ---------------------------------------------------------------------------------------
+} // namespace OpenMM
 
 #endif // __ReferenceRbDihedralBond_H__

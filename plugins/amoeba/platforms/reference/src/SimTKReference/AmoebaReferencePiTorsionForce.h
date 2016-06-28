@@ -1,5 +1,5 @@
 
-/* Portions copyright (c) 2006 Stanford University and Simbios.
+/* Portions copyright (c) 2006-2016 Stanford University and Simbios.
  * Contributors: Pande Group
  *
  * Permission is hereby granted, free of charge, to any person obtaining
@@ -28,7 +28,7 @@
 #include "RealVec.h"
 #include <vector>
 
-// ---------------------------------------------------------------------------------------
+namespace OpenMM {
 
 class AmoebaReferencePiTorsionForce {
 
@@ -40,7 +40,7 @@ public:
        
        --------------------------------------------------------------------------------------- */
  
-    AmoebaReferencePiTorsionForce( ){};
+    AmoebaReferencePiTorsionForce() : usePeriodic(false) {};
  
     /**---------------------------------------------------------------------------------------
        
@@ -48,8 +48,18 @@ public:
        
           --------------------------------------------------------------------------------------- */
  
-    ~AmoebaReferencePiTorsionForce( ){};
+    ~AmoebaReferencePiTorsionForce() {};
  
+    /**---------------------------------------------------------------------------------------
+
+       Set the force to use periodic boundary conditions.
+      
+       @param vectors    the vectors defining the periodic box
+      
+       --------------------------------------------------------------------------------------- */
+      
+    void setPeriodic(OpenMM::RealVec* vectors);
+
      /**---------------------------------------------------------------------------------------
      
         Calculate Amoeba torsion ixns (force and energy)
@@ -72,18 +82,21 @@ public:
      
         --------------------------------------------------------------------------------------- */
 
-    RealOpenMM calculateForceAndEnergy( int numPiTorsions, std::vector<OpenMM::RealVec>& posData,
-                                        const std::vector<int>&  particle1,
-                                        const std::vector<int>&  particle2,
-                                        const std::vector<int>&  particle3,
-                                        const std::vector<int>&  particle4,
-                                        const std::vector<int>&  particle5,
-                                        const std::vector<int>&  particle6,
-                                        const std::vector<RealOpenMM>& kTorsion,
-                                        std::vector<OpenMM::RealVec>& forceData ) const;
+    RealOpenMM calculateForceAndEnergy(int numPiTorsions, std::vector<OpenMM::RealVec>& posData,
+                                       const std::vector<int>&  particle1,
+                                       const std::vector<int>&  particle2,
+                                       const std::vector<int>&  particle3,
+                                       const std::vector<int>&  particle4,
+                                       const std::vector<int>&  particle5,
+                                       const std::vector<int>&  particle6,
+                                       const std::vector<RealOpenMM>& kTorsion,
+                                       std::vector<OpenMM::RealVec>& forceData) const;
 
 
 private:
+
+    bool usePeriodic;
+    RealVec boxVectors[3];
 
     /**---------------------------------------------------------------------------------------
     
@@ -102,13 +115,13 @@ private:
     
        --------------------------------------------------------------------------------------- */
     
-    RealOpenMM calculatePiTorsionIxn( const OpenMM::RealVec& positionAtomA, const OpenMM::RealVec& positionAtomB,
-                                      const OpenMM::RealVec& positionAtomC, const OpenMM::RealVec& positionAtomD,
-                                      const OpenMM::RealVec& positionAtomE, const OpenMM::RealVec& positionAtomF,
-                                      RealOpenMM kTorsion, OpenMM::RealVec* forces ) const;
+    RealOpenMM calculatePiTorsionIxn(const OpenMM::RealVec& positionAtomA, const OpenMM::RealVec& positionAtomB,
+                                     const OpenMM::RealVec& positionAtomC, const OpenMM::RealVec& positionAtomD,
+                                     const OpenMM::RealVec& positionAtomE, const OpenMM::RealVec& positionAtomF,
+                                     RealOpenMM kTorsion, OpenMM::RealVec* forces) const;
          
 };
 
-// ---------------------------------------------------------------------------------------
+} // namespace OpenMM
 
 #endif // _AmoebaReferencePiTorsionForce___

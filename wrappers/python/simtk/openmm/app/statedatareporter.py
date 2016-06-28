@@ -28,6 +28,8 @@ DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
 OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
+from __future__ import absolute_import
+from __future__ import print_function
 __author__ = "Peter Eastman"
 __version__ = "1.0"
 
@@ -55,33 +57,57 @@ class StateDataReporter(object):
     """
 
     def __init__(self, file, reportInterval, step=False, time=False, potentialEnergy=False, kineticEnergy=False, totalEnergy=False, temperature=False, volume=False, density=False,
-                 progress=False, remainingTime=False, speed=False, separator=',', systemMass=None, totalSteps=None):
+                 progress=False, remainingTime=False, speed=False, elapsedTime=False, separator=',', systemMass=None, totalSteps=None):
         """Create a StateDataReporter.
 
-        Parameters:
-         - file (string or file) The file to write to, specified as a file name or file object
-         - reportInterval (int) The interval (in time steps) at which to write frames
-         - step (boolean=False) Whether to write the current step index to the file
-         - time (boolean=False) Whether to write the current time to the file
-         - potentialEnergy (boolean=False) Whether to write the potential energy to the file
-         - kineticEnergy (boolean=False) Whether to write the kinetic energy to the file
-         - totalEnergy (boolean=False) Whether to write the total energy to the file
-         - temperature (boolean=False) Whether to write the instantaneous temperature to the file
-         - volume (boolean=False) Whether to write the periodic box volume to the file
-         - density (boolean=False) Whether to write the system density to the file
-         - progress (boolean=False) Whether to write current progress (percent completion) to the file.
-           If this is True, you must also specify totalSteps.
-         - remainingTime (boolean=False) Whether to write an estimate of the remaining clock time until
-           completion to the file.  If this is True, you must also specify totalSteps.
-         - speed (bool=False) Whether to write an estimate of the simulation speed in ns/day to the file
-         - separator (string=',') The separator to use between columns in the file
-         - systemMass (mass=None) The total mass to use for the system when reporting density.  If this is
-           None (the default), the system mass is computed by summing the masses of all particles.  This
-           parameter is useful when the particle masses do not reflect their actual physical mass, such as
-           when some particles have had their masses set to 0 to immobilize them.
-         - totalSteps (int=None) The total number of steps that will be included in the simulation.  This
-           is required if either progress or remainingTime is set to True, and defines how many steps will
-           indicate 100% completion.
+        Parameters
+        ----------
+        file : string or file
+            The file to write to, specified as a file name or file object
+        reportInterval : int
+            The interval (in time steps) at which to write frames
+        step : bool=False
+            Whether to write the current step index to the file
+        time : bool=False
+            Whether to write the current time to the file
+        potentialEnergy : bool=False
+            Whether to write the potential energy to the file
+        kineticEnergy : bool=False
+            Whether to write the kinetic energy to the file
+        totalEnergy : bool=False
+            Whether to write the total energy to the file
+        temperature : bool=False
+            Whether to write the instantaneous temperature to the file
+        volume : bool=False
+            Whether to write the periodic box volume to the file
+        density : bool=False
+            Whether to write the system density to the file
+        progress : bool=False
+            Whether to write current progress (percent completion) to the file.
+            If this is True, you must also specify totalSteps.
+        remainingTime : bool=False
+            Whether to write an estimate of the remaining clock time until
+            completion to the file.  If this is True, you must also specify
+            totalSteps.
+        speed : bool=False
+            Whether to write an estimate of the simulation speed in ns/day to
+            the file
+        elapsedTime : bool=False
+            Whether to write the elapsed time of the simulation in seconds to
+            the file.
+        separator : string=','
+            The separator to use between columns in the file
+        systemMass : mass=None
+            The total mass to use for the system when reporting density.  If
+            this is None (the default), the system mass is computed by summing
+            the masses of all particles.  This parameter is useful when the
+            particle masses do not reflect their actual physical mass, such as
+            when some particles have had their masses set to 0 to immobilize
+            them.
+        totalSteps : int=None
+            The total number of steps that will be included in the simulation.
+            This is required if either progress or remainingTime is set to True,
+            and defines how many steps will indicate 100% completion.
         """
         self._reportInterval = reportInterval
         self._openedFile = isinstance(file, str)
@@ -99,7 +125,7 @@ class StateDataReporter(object):
                     raise RuntimeError("Cannot write .bz2 file because Python could not import bz2 library")
                 self._out = bz2.BZ2File(file, 'w', 0)
             else:
-                self._out = open(file, 'w', 0)
+                self._out = open(file, 'w')
         else:
             self._out = file
         self._step = step
@@ -113,6 +139,7 @@ class StateDataReporter(object):
         self._progress = progress
         self._remainingTime = remainingTime
         self._speed = speed
+        self._elapsedTime = elapsedTime
         self._separator = separator
         self._totalMass = systemMass
         self._totalSteps = totalSteps
@@ -125,11 +152,18 @@ class StateDataReporter(object):
     def describeNextReport(self, simulation):
         """Get information about the next report this object will generate.
 
-        Parameters:
-         - simulation (Simulation) The Simulation to generate a report for
-        Returns: A five element tuple.  The first element is the number of steps until the
-        next report.  The remaining elements specify whether that report will require
-        positions, velocities, forces, and energies respectively.
+        Parameters
+        ----------
+        simulation : Simulation
+            The Simulation to generate a report for
+
+        Returns
+        -------
+        tuple
+            A five element tuple. The first element is the number of steps
+            until the next report. The remaining elements specify whether
+            that report will require positions, velocities, forces, and
+            energies respectively.
         """
         steps = self._reportInterval - simulation.currentStep%self._reportInterval
         return (steps, self._needsPositions, self._needsVelocities, self._needsForces, self._needEnergy)
@@ -137,14 +171,17 @@ class StateDataReporter(object):
     def report(self, simulation, state):
         """Generate a report.
 
-        Parameters:
-         - simulation (Simulation) The Simulation to generate a report for
-         - state (State) The current state of the simulation
+        Parameters
+        ----------
+        simulation : Simulation
+            The Simulation to generate a report for
+        state : State
+            The current state of the simulation
         """
         if not self._hasInitialized:
             self._initializeConstants(simulation)
             headers = self._constructHeaders()
-            print >>self._out, '#"%s"' % ('"'+self._separator+'"').join(headers)
+            print('#"%s"' % ('"'+self._separator+'"').join(headers), file=self._out)
             try:
                 self._out.flush()
             except AttributeError:
@@ -161,7 +198,7 @@ class StateDataReporter(object):
         values = self._constructReportValues(simulation, state)
 
         # Write the values.
-        print >>self._out, self._separator.join(str(v) for v in values)
+        print(self._separator.join(str(v) for v in values), file=self._out)
         try:
             self._out.flush()
         except AttributeError:
@@ -170,11 +207,16 @@ class StateDataReporter(object):
     def _constructReportValues(self, simulation, state):
         """Query the simulation for the current state of our observables of interest.
 
-        Parameters:
-         - simulation (Simulation) The Simulation to generate a report for
-         - state (State) The current state of the simulation
+        Parameters
+        ----------
+        simulation : Simulation
+            The Simulation to generate a report for
+        state : State
+            The current state of the simulation
 
-        Returns: A list of values summarizing the current state of
+        Returns
+        -------
+        A list of values summarizing the current state of
         the simulation, to be printed or saved. Each element in the list
         corresponds to one of the columns in the resulting CSV file.
         """
@@ -207,6 +249,8 @@ class StateDataReporter(object):
                 values.append('%.3g' % (elapsedNs/elapsedDays))
             else:
                 values.append('--')
+        if self._elapsedTime:
+            values.append(time.time() - self._initialClockTime)
         if self._remainingTime:
             elapsedSeconds = clockTime-self._initialClockTime
             elapsedSteps = simulation.currentStep-self._initialSteps
@@ -284,6 +328,8 @@ class StateDataReporter(object):
             headers.append('Density (g/mL)')
         if self._speed:
             headers.append('Speed (ns/day)')
+        if self._elapsedTime:
+            headers.append('Elapsed Time (s)')
         if self._remainingTime:
             headers.append('Time Remaining')
         return headers

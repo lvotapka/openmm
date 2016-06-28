@@ -6,7 +6,7 @@
  * Biological Structures at Stanford, funded under the NIH Roadmap for        *
  * Medical Research, grant U54 GM072970. See https://simtk.org.               *
  *                                                                            *
- * Portions copyright (c) 2008-2012 Stanford University and the Authors.      *
+ * Portions copyright (c) 2008-2016 Stanford University and the Authors.      *
  * Authors: Peter Eastman                                                     *
  * Contributors:                                                              *
  *                                                                            *
@@ -45,11 +45,17 @@
 #include <cstdlib>
 #endif
 #include <set>
+#include <algorithm>
 
 #include "ReferencePlatform.h"
 
 using namespace OpenMM;
 using namespace std;
+
+std::vector<std::string> Platform::pluginLoadFailures;
+static bool stringLengthComparator(string i, string j) {
+  return (i.size() < j.size());
+}
 
 static int registerPlatforms() {
 
@@ -83,15 +89,21 @@ void Platform::setPropertyValue(Context& context, const string& property, const 
 }
 
 const string& Platform::getPropertyDefaultValue(const string& property) const {
-    map<string, string>::const_iterator value = defaultProperties.find(property);
+    string propertyName = property;
+    if (deprecatedPropertyReplacements.find(property) != deprecatedPropertyReplacements.end())
+        propertyName = deprecatedPropertyReplacements.find(property)->second;
+    map<string, string>::const_iterator value = defaultProperties.find(propertyName);
     if (value == defaultProperties.end())
         throw OpenMMException("getPropertyDefaultValue: Illegal property name");
     return value->second;
 }
 
 void Platform::setPropertyDefaultValue(const string& property, const string& value) {
+    string propertyName = property;
+    if (deprecatedPropertyReplacements.find(property) != deprecatedPropertyReplacements.end())
+        propertyName = deprecatedPropertyReplacements.find(property)->second;
     for (int i = 0; i < (int) platformProperties.size(); i++)
-        if (platformProperties[i] == property) {
+        if (platformProperties[i] == propertyName) {
             defaultProperties[property] = value;
             return;
         }
@@ -134,7 +146,14 @@ int Platform::getNumPlatforms() {
 }
 
 Platform& Platform::getPlatform(int index) {
-    return *getPlatforms()[index];
+    if (index >= 0 && index < getNumPlatforms()) {
+        return *getPlatforms()[index];
+    }
+    throw OpenMMException("Invalid platform index");
+}
+
+std::vector<std::string> Platform::getPluginLoadFailures() {
+  return pluginLoadFailures;
 }
 
 Platform& Platform::getPlatformByName(const string& name) {
@@ -176,13 +195,13 @@ static HMODULE loadOneLibrary(const string& file) {
 static void initializePlugins(vector<HMODULE>& plugins) {
     for (int i = 0; i < (int) plugins.size(); i++) {
         void (*init)();
-        *(void **)(&init) = GetProcAddress(plugins[i], "registerPlatforms");
+        *(void **)(&init) = (void *) GetProcAddress(plugins[i], "registerPlatforms");
         if (init != NULL)
             (*init)();
     }
     for (int i = 0; i < (int) plugins.size(); i++) {
         void (*init)();
-        *(void **)(&init) = GetProcAddress(plugins[i], "registerKernelFactories");
+        *(void **)(&init) = (void *) GetProcAddress(plugins[i], "registerKernelFactories");
         if (init != NULL)
             (*init)();
     }
@@ -193,8 +212,9 @@ static void* loadOneLibrary(const string& file) {
     throw OpenMMException("Loading dynamic libraries is not supported on PNaCl");
 #else    
     void *handle = dlopen(file.c_str(), RTLD_LAZY | RTLD_GLOBAL);
-    if (handle == NULL)
+    if (handle == NULL) {
         throw OpenMMException("Error loading library "+file+": "+dlerror());
+    }
     return handle;
 #endif
 }
@@ -258,12 +278,15 @@ vector<string> Platform::loadPluginsFromDirectory(const string& directory) {
     vector<void*> plugins;
 #endif
     vector<string> loadedLibraries;
+    pluginLoadFailures.resize(0);
+    std::sort (files.begin(), files.end(), stringLengthComparator);
+
     for (unsigned int i = 0; i < files.size(); ++i) {
         try {
             plugins.push_back(loadOneLibrary(directory+dirSeparator+files[i]));
             loadedLibraries.push_back(files[i]);
         } catch (OpenMMException& ex) {
-            // Just ignore it.
+	    pluginLoadFailures.push_back(ex.what());
         }
     }
     initializePlugins(plugins);
@@ -297,7 +320,11 @@ const string& Platform::getDefaultPluginsDirectory() {
 #define STRING(x) STRING1(x)
 
 const string& Platform::getOpenMMVersion() {
+#if OPENMM_BUILD_VERSION == 0
     static const string version = STRING(OPENMM_MAJOR_VERSION) "." STRING(OPENMM_MINOR_VERSION);
+#else
+    static const string version = STRING(OPENMM_MAJOR_VERSION) "." STRING(OPENMM_MINOR_VERSION) "." STRING(OPENMM_BUILD_VERSION);
+#endif
     return version;
 }
 

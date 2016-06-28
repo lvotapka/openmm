@@ -79,10 +79,10 @@ public:
     /**
      * Get the force field parameters for a particle.
      * 
-     * @param index          the index of the particle for which to get parameters
-     * @param charge         the charge of the particle, measured in units of the proton charge
-     * @param radius         the atomic radius of the particle, measured in nm
-     * @param scalingFactor  the scaling factor for the particle
+     * @param      index          the index of the particle for which to get parameters
+     * @param[out] charge         the charge of the particle, measured in units of the proton charge
+     * @param[out] radius         the atomic radius of the particle, measured in nm
+     * @param[out] scalingFactor  the scaling factor for the particle
      */
     void getParticleParameters(int index, double& charge, double& radius, double& scalingFactor) const;
 
@@ -127,7 +127,7 @@ public:
     /**
      * Get the flag signaling whether the cavity term should be included
      */
-    int getIncludeCavityTerm( ) const;
+    int getIncludeCavityTerm() const;
 
     /**
      * Set the flag signaling whether the cavity term should be included
@@ -152,18 +152,26 @@ public:
     /**
      * Set the surface area factor kJ/(nm*nm) used in SASA contribution
      */
-    void setSurfaceAreaFactor( double surfaceAreaFactor );
+    void setSurfaceAreaFactor(double surfaceAreaFactor);
     /**
      * Update the per-particle parameters in a Context to match those stored in this Force object.  This method provides
      * an efficient method to update certain parameters in an existing Context without needing to reinitialize it.
-     * Simply call setParticleParameters() to modify this object's parameters, then call updateParametersInState()
+     * Simply call setParticleParameters() to modify this object's parameters, then call updateParametersInContext()
      * to copy them over to the Context.
      * 
      * The only information this method updates is the values of per-particle parameters.  All other aspects of the Force
      * (the probe radius, the surface area factor, etc.) are unaffected and can only be changed by reinitializing the Context.
      */
     void updateParametersInContext(Context& context);
-
+    /**
+     * Returns whether or not this force makes use of periodic boundary
+     * conditions.
+     *
+     * @returns true if nonbondedMethod uses PBC and false otherwise
+     */
+    bool usesPeriodicBoundaryConditions() const {
+        return false;
+    }
 protected:
     ForceImpl* createImpl() const;
 private:

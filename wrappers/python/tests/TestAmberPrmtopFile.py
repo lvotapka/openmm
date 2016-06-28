@@ -1,4 +1,6 @@
 import unittest
+import os
+import tempfile
 from validateConstraints import *
 from simtk.openmm.app import *
 from simtk.openmm import *
@@ -9,6 +11,8 @@ prmtop1 = AmberPrmtopFile('systems/alanine-dipeptide-explicit.prmtop')
 prmtop2 = AmberPrmtopFile('systems/alanine-dipeptide-implicit.prmtop')
 prmtop3 = AmberPrmtopFile('systems/ff14ipq.parm7')
 prmtop4 = AmberPrmtopFile('systems/Mg_water.prmtop')
+prmtop5 = AmberPrmtopFile('systems/tz2.truncoct.parm7')
+prmtop6 = AmberPrmtopFile('systems/gaffwat.parm7')
 inpcrd3 = AmberInpcrdFile('systems/ff14ipq.rst7')
 inpcrd4 = AmberInpcrdFile('systems/Mg_water.inpcrd')
 
@@ -19,23 +23,23 @@ class TestAmberPrmtopFile(unittest.TestCase):
     def test_NonbondedMethod(self):
         """Test all five options for the nonbondedMethod parameter."""
 
-        methodMap = {NoCutoff:NonbondedForce.NoCutoff, 
-                     CutoffNonPeriodic:NonbondedForce.CutoffNonPeriodic, 
-                     CutoffPeriodic:NonbondedForce.CutoffPeriodic, 
+        methodMap = {NoCutoff:NonbondedForce.NoCutoff,
+                     CutoffNonPeriodic:NonbondedForce.CutoffNonPeriodic,
+                     CutoffPeriodic:NonbondedForce.CutoffPeriodic,
                      Ewald:NonbondedForce.Ewald, PME: NonbondedForce.PME}
         for method in methodMap:
             system = prmtop1.createSystem(nonbondedMethod=method)
             forces = system.getForces()
-            self.assertTrue(any(isinstance(f, NonbondedForce) and 
-                                f.getNonbondedMethod()==methodMap[method] 
+            self.assertTrue(any(isinstance(f, NonbondedForce) and
+                                f.getNonbondedMethod()==methodMap[method]
                                 for f in forces))
 
     def test_Cutoff(self):
         """Test to make sure the nonbondedCutoff parameter is passed correctly."""
 
         for method in [CutoffNonPeriodic, CutoffPeriodic, Ewald, PME]:
-            system = prmtop1.createSystem(nonbondedMethod=method, 
-                                          nonbondedCutoff=2*nanometer, 
+            system = prmtop1.createSystem(nonbondedMethod=method,
+                                          nonbondedCutoff=2*nanometer,
                                           constraints=HBonds)
             cutoff_distance = 0.0*nanometer
             cutoff_check = 2.0*nanometer
@@ -48,8 +52,8 @@ class TestAmberPrmtopFile(unittest.TestCase):
         """Test to make sure the ewaldErrorTolerance parameter is passed correctly."""
 
         for method in [Ewald, PME]:
-            system = prmtop1.createSystem(nonbondedMethod=method, 
-                                          ewaldErrorTolerance=1e-6, 
+            system = prmtop1.createSystem(nonbondedMethod=method,
+                                          ewaldErrorTolerance=1e-6,
                                           constraints=HBonds)
             tolerance = 0
             tolerance_check = 1e-6
@@ -72,13 +76,13 @@ class TestAmberPrmtopFile(unittest.TestCase):
         topology = prmtop1.topology
         for constraints_value in [None, HBonds, AllBonds, HAngles]:
             for rigidWater_value in [True, False]:
-                system = prmtop1.createSystem(constraints=constraints_value, 
+                system = prmtop1.createSystem(constraints=constraints_value,
                                               rigidWater=rigidWater_value)
-                validateConstraints(self, topology, system, 
+                validateConstraints(self, topology, system,
                                     constraints_value, rigidWater_value)
 
     def test_ImplicitSolvent(self):
-        """Test the four types of implicit solvents using the implicitSolvent 
+        """Test the four types of implicit solvents using the implicitSolvent
         parameter.
 
         """
@@ -89,7 +93,7 @@ class TestAmberPrmtopFile(unittest.TestCase):
                 force_type = CustomGBForce
             else:
                 force_type = GBSAOBCForce
-            
+
             self.assertTrue(any(isinstance(f, force_type) for f in forces))
 
     def test_ImplicitSolventParameters(self):
@@ -98,7 +102,7 @@ class TestAmberPrmtopFile(unittest.TestCase):
                      CutoffNonPeriodic:NonbondedForce.CutoffNonPeriodic}
         for implicitSolvent_value in [HCT, OBC1, OBC2, GBn]:
             for method in methodMap:
-                system = prmtop2.createSystem(implicitSolvent=implicitSolvent_value, 
+                system = prmtop2.createSystem(implicitSolvent=implicitSolvent_value,
                                     solventDielectric=50.0, soluteDielectric=0.9, nonbondedMethod=method)
                 if implicitSolvent_value in set([HCT, OBC1, GBn]):
                     for force in system.getForces():
@@ -118,12 +122,12 @@ class TestAmberPrmtopFile(unittest.TestCase):
                         if isinstance(force, NonbondedForce):
                             self.assertEqual(force.getReactionFieldDielectric(), 1.0)
                             self.assertEqual(force.getNonbondedMethod(), methodMap[method])
-                    self.assertTrue(found_matching_solvent_dielectric and 
+                    self.assertTrue(found_matching_solvent_dielectric and
                                     found_matching_solute_dielectric)
 
     def test_HydrogenMass(self):
         """Test that altering the mass of hydrogens works correctly."""
-        
+
         topology = prmtop1.topology
         hydrogenMass = 4*amu
         system1 = prmtop1.createSystem()
@@ -197,6 +201,24 @@ class TestAmberPrmtopFile(unittest.TestCase):
         # Amber using this force field.
         self.assertAlmostEqual(-7042.3903307/ene, 1, places=3)
 
+    def test_HAngle(self):
+        """ Test that HAngle constraints are properly handled for all hydrogens """
+        system = prmtop6.createSystem(nonbondedMethod=PME,
+                                      nonbondedCutoff=1*nanometers,
+                                      constraints=HBonds)
+        self.assertEqual(system.getForce(0).getNumBonds(), 0)
+        self.assertEqual(system.getNumParticles(), 3000)
+        self.assertEqual(system.getNumConstraints(), 2000)
+        self.assertEqual(system.getForce(1).getNumAngles(), 1000)
+
+        system = prmtop6.createSystem(nonbondedMethod=PME,
+                                      nonbondedCutoff=1*nanometers,
+                                      constraints=HAngles)
+        self.assertEqual(system.getForce(0).getNumBonds(), 0)
+        self.assertEqual(system.getNumParticles(), 3000)
+        self.assertEqual(system.getNumConstraints(), 3000)
+        self.assertEqual(system.getForce(1).getNumAngles(), 0)
+
     def test_LJ1264(self):
         """Test prmtop with 12-6-4 vdW potential implemented"""
         system = prmtop4.createSystem(nonbondedMethod=PME,
@@ -229,10 +251,35 @@ class TestAmberPrmtopFile(unittest.TestCase):
         # Make sure the energy is relatively close to the value we get with
         # Amber using this force field.
         self.assertAlmostEqual(-7307.2735621/ene, 1, places=3)
-    
+
+    def test_triclinicParm(self):
+        """ Check that triclinic unit cells work correctly """
+        system = prmtop5.createSystem(nonbondedMethod=PME)
+        refa = Vec3(4.48903851, 0.0, 0.0) * nanometer
+        refb = Vec3(-1.4963460492639706, 4.232306137924705, 0.0) * nanometer
+        refc = Vec3(-1.4963460492639706, -2.116152812842565, 3.6652847799064165) * nanometer
+        a, b, c = system.getDefaultPeriodicBoxVectors()
+        la = norm(a)
+        lb = norm(b)
+        lc = norm(c)
+        diffa = a - refa
+        diffb = b - refb
+        diffc = c - refc
+        self.assertAlmostEqual(norm(diffa)/nanometers, 0)
+        self.assertAlmostEqual(norm(diffb)/nanometers, 0)
+        self.assertAlmostEqual(norm(diffc)/nanometers, 0)
+        self.assertAlmostEqual(dot(a, b)/la/lb, cos(109.4712190*degrees))
+        self.assertAlmostEqual(dot(a, c)/la/lc, cos(109.4712190*degrees))
+        self.assertAlmostEqual(dot(c, b)/lc/lb, cos(109.4712190*degrees))
+        self.assertAlmostEqual(la/nanometers, 4.48903851)
+        self.assertAlmostEqual(lb/nanometers, 4.48903851)
+        self.assertAlmostEqual(lc/nanometers, 4.48903851)
+        # Now make sure that the context builds correctly; then we can bail
+        self.assertTrue(Context(system, VerletIntegrator(1*femtoseconds)))
+
     def test_ImplicitSolventForces(self):
         """Compute forces for different implicit solvent types, and compare them to ones generated with a previous version of OpenMM to ensure they haven't changed."""
-        
+
         solventType = [HCT, OBC1, OBC2, GBn, GBn2]
         nonbondedMethod = [NoCutoff, CutoffNonPeriodic, CutoffNonPeriodic, NoCutoff, NoCutoff]
         salt = [0.0, 0.0, 0.5, 0.5, 0.0]*(moles/liter)
@@ -241,13 +288,90 @@ class TestAmberPrmtopFile(unittest.TestCase):
         for i in range(5):
             system = prmtop2.createSystem(implicitSolvent=solventType[i], nonbondedMethod=nonbondedMethod[i], implicitSolventSaltConc=salt[i])
             integrator = VerletIntegrator(0.001)
-            context = Context(system, integrator, Platform.getPlatformByName("CPU"))
+            context = Context(system, integrator, Platform.getPlatformByName("Reference"))
             context.setPositions(pdb.positions)
             state1 = context.getState(getForces=True)
             state2 = XmlSerializer.deserialize(open('systems/alanine-dipeptide-implicit-forces/'+file[i]+'.xml').read())
             for f1, f2, in zip(state1.getForces().value_in_unit(kilojoules_per_mole/nanometer), state2.getForces().value_in_unit(kilojoules_per_mole/nanometer)):
                 diff = norm(f1-f2)
                 self.assertTrue(diff < 0.1 or diff/norm(f1) < 1e-4)
+
+    def testSwitchFunction(self):
+        """ Tests the switching function option in AmberPrmtopFile """
+        system = prmtop1.createSystem(nonbondedMethod=PME,
+                                      nonbondedCutoff=1*nanometer,
+                                      switchDistance=0.8*nanometer)
+        for force in system.getForces():
+            if isinstance(force, NonbondedForce):
+                self.assertTrue(force.getUseSwitchingFunction())
+                self.assertEqual(force.getSwitchingDistance(), 0.8*nanometer)
+                break
+        else:
+            assert False, 'Did not find expected nonbonded force!'
+
+        # Check error handling
+        system = prmtop1.createSystem(nonbondedMethod=PME,
+                                      nonbondedCutoff=1*nanometer)
+        for force in system.getForces():
+            if isinstance(force, NonbondedForce):
+                self.assertFalse(force.getUseSwitchingFunction())
+                break
+        else:
+            assert False, 'Did not find expected nonbonded force!'
+
+        self.assertRaises(ValueError, lambda:
+                prmtop1.createSystem(nonbondedMethod=PME,
+                    nonbondedCutoff=1*nanometer, switchDistance=-1)
+        )
+        self.assertRaises(ValueError, lambda:
+                prmtop1.createSystem(nonbondedMethod=PME,
+                    nonbondedCutoff=1*nanometer, switchDistance=1.2)
+        )
+
+    def test_with_dcd_reporter(self):
+        """Check that an amber simulation like the docs example works with a DCD reporter."""
+
+        temperature = 50*kelvin
+
+        prmtop = prmtop4  # Mg + water
+        inpcrd = inpcrd4  # Mg + water
+        system = prmtop.createSystem(nonbondedMethod=PME, nonbondedCutoff=1*nanometer, constraints=HBonds)
+        system.addForce(MonteCarloBarostat(1.0 * atmospheres, temperature, 1))
+
+        integrator = LangevinIntegrator(temperature, 1.0 / picosecond, 0.0001 * picoseconds)
+
+        simulation = Simulation(prmtop.topology, system, integrator)
+        simulation.context.setPositions(inpcrd.positions)
+        simulation.context.setPeriodicBoxVectors(*inpcrd.boxVectors)
+
+        fname = tempfile.mktemp(suffix='.dcd')
+        simulation.reporters.append(DCDReporter(fname, 1))  # This is an explicit test for the bugs in issue #850
+        simulation.step(5)
+        del simulation
+        os.remove(fname)
+
+    def testChamber(self):
+        """ Tests that Chamber prmtops fail with proper error message """
+        self.assertRaises(TypeError, lambda: AmberPrmtopFile('systems/ala3_solv.parm7'))
+        try:
+            parm = AmberPrmtopFile('systems/ala3_solv.parm7')
+            # Should not make it past here
+            self.assertTrue(False)
+        except TypeError as e:
+            # Make sure it says something about chamber
+            self.assertTrue('chamber' in str(e).lower())
+
+    def testGBneckRadii(self):
+        """ Tests that GBneck radii limits are correctly enforced """
+        from simtk.openmm.app.internal.customgbforces import GBSAGBnForce
+        f = GBSAGBnForce()
+        # Make sure legal parameters do not raise
+        f.addParticle([0, 0.1, 0.5])
+        f.addParticle([0, 0.2, 0.5])
+        f.addParticle([0, 0.15, 0.5])
+        # Now make sure that out-of-range parameters *do* raise
+        self.assertRaises(ValueError, lambda: f.addParticle([0, 0.9, 0.5]))
+        self.assertRaises(ValueError, lambda: f.addParticle([0, 0.21, 0.5]))
 
 if __name__ == '__main__':
     unittest.main()

@@ -1,5 +1,5 @@
 
-/* Portions copyright (c) 2009-2010 Stanford University and Simbios.
+/* Portions copyright (c) 2009-2016 Stanford University and Simbios.
  * Contributors: Peter Eastman
  *
  * Permission is hereby granted, free of charge, to any person obtaining
@@ -26,8 +26,6 @@
 #include <sstream>
 #include <utility>
 
-#include "SimTKOpenMMCommon.h"
-#include "SimTKOpenMMLog.h"
 #include "SimTKOpenMMUtilities.h"
 #include "ReferenceForce.h"
 #include "ReferenceCustomCompoundBondIxn.h"
@@ -37,7 +35,7 @@ using std::pair;
 using std::string;
 using std::stringstream;
 using std::vector;
-using OpenMM::RealVec;
+using namespace OpenMM;
 
 /**---------------------------------------------------------------------------------------
 
@@ -48,7 +46,7 @@ using OpenMM::RealVec;
 ReferenceCustomCompoundBondIxn::ReferenceCustomCompoundBondIxn(int numParticlesPerBond, const vector<vector<int> >& bondAtoms,
             const Lepton::ParsedExpression& energyExpression, const vector<string>& bondParameterNames,
             const map<string, vector<int> >& distances, const map<string, vector<int> >& angles, const map<string, vector<int> >& dihedrals) :
-            bondAtoms(bondAtoms), energyExpression(energyExpression.createProgram()), bondParamNames(bondParameterNames) {
+            bondAtoms(bondAtoms), energyExpression(energyExpression.createProgram()), bondParamNames(bondParameterNames), usePeriodic(false) {
     for (int i = 0; i < numParticlesPerBond; i++) {
         stringstream xname, yname, zname;
         xname << 'x' << (i+1);
@@ -72,7 +70,14 @@ ReferenceCustomCompoundBondIxn::ReferenceCustomCompoundBondIxn(int numParticlesP
 
    --------------------------------------------------------------------------------------- */
 
-ReferenceCustomCompoundBondIxn::~ReferenceCustomCompoundBondIxn( ){
+ReferenceCustomCompoundBondIxn::~ReferenceCustomCompoundBondIxn() {
+}
+
+void ReferenceCustomCompoundBondIxn::setPeriodic(OpenMM::RealVec* vectors) {
+    usePeriodic = true;
+    boxVectors[0] = vectors[0];
+    boxVectors[1] = vectors[1];
+    boxVectors[2] = vectors[2];
 }
 
 /**---------------------------------------------------------------------------------------
@@ -93,7 +98,7 @@ void ReferenceCustomCompoundBondIxn::calculatePairIxn(vector<RealVec>& atomCoord
 
     map<string, double> variables = globalParameters;
     int numBonds = bondAtoms.size();
-    for (int bond = 0; bond < numBonds; bond++){
+    for (int bond = 0; bond < numBonds; bond++) {
         for (int j = 0; j < (int) bondParamNames.size(); j++)
             variables[bondParamNames[j]] = bondParameters[bond][j];
         calculateOneIxn(bond, atomCoordinates, variables, forces, totalEnergy);
@@ -127,7 +132,7 @@ void ReferenceCustomCompoundBondIxn::calculateOneIxn(int bond, vector<RealVec>& 
     const vector<int>& atoms = bondAtoms[bond];
     for (int i = 0; i < (int) particleTerms.size(); i++) {
         const ParticleTermInfo& term = particleTerms[i];
-        variables[term.name] = atomCoordinates[term.atom][term.component];
+        variables[term.name] = atomCoordinates[atoms[term.atom]][term.component];
     }
     for (int i = 0; i < (int) distanceTerms.size(); i++) {
         const DistanceTermInfo& term = distanceTerms[i];
@@ -234,7 +239,10 @@ void ReferenceCustomCompoundBondIxn::calculateOneIxn(int bond, vector<RealVec>& 
 }
 
 void ReferenceCustomCompoundBondIxn::computeDelta(int atom1, int atom2, RealOpenMM* delta, vector<RealVec>& atomCoordinates) const {
-    ReferenceForce::getDeltaR(atomCoordinates[atom1], atomCoordinates[atom2], delta);
+    if (usePeriodic)
+        ReferenceForce::getDeltaRPeriodic(atomCoordinates[atom1], atomCoordinates[atom2], boxVectors, delta);
+    else
+        ReferenceForce::getDeltaR(atomCoordinates[atom1], atomCoordinates[atom2], delta);
 }
 
 RealOpenMM ReferenceCustomCompoundBondIxn::computeAngle(RealOpenMM* vec1, RealOpenMM* vec2) {

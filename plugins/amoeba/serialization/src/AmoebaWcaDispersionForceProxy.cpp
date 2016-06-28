@@ -6,7 +6,7 @@
  * Biological Structures at Stanford, funded under the NIH Roadmap for        *
  * Medical Research, grant U54 GM072970. See https://simtk.org.               *
  *                                                                            *
- * Portions copyright (c) 2010 Stanford University and the Authors.           *
+ * Portions copyright (c) 2010-2016 Stanford University and the Authors.      *
  * Authors: Peter Eastman                                                     *
  * Contributors:                                                              *
  *                                                                            *
@@ -42,8 +42,9 @@ AmoebaWcaDispersionForceProxy::AmoebaWcaDispersionForceProxy() : SerializationPr
 }
 
 void AmoebaWcaDispersionForceProxy::serialize(const void* object, SerializationNode& node) const {
-    node.setIntProperty("version", 1);
+    node.setIntProperty("version", 2);
     const AmoebaWcaDispersionForce& force = *reinterpret_cast<const AmoebaWcaDispersionForce*>(object);
+    node.setIntProperty("forceGroup", force.getForceGroup());
     node.setDoubleProperty("Epso",    force.getEpso());
     node.setDoubleProperty("Epsh",    force.getEpsh());
     node.setDoubleProperty("Rmino",   force.getRmino());
@@ -56,34 +57,36 @@ void AmoebaWcaDispersionForceProxy::serialize(const void* object, SerializationN
     SerializationNode& particles = node.createChildNode("WcaDispersionParticles");
     for (unsigned int ii = 0; ii < static_cast<unsigned int>(force.getNumParticles()); ii++) {
         double radius, epsilon;
-        force.getParticleParameters( ii,  radius, epsilon );
+        force.getParticleParameters(ii,  radius, epsilon);
         particles.createChildNode("Particle").setDoubleProperty("radius", radius).setDoubleProperty("epsilon", epsilon);
     }
 
 }
 
 void* AmoebaWcaDispersionForceProxy::deserialize(const SerializationNode& node) const {
-    if (node.getIntProperty("version") != 1)
+    int version = node.getIntProperty("version");
+    if (version < 1 || version > 2)
         throw OpenMMException("Unsupported version number");
     AmoebaWcaDispersionForce* force = new AmoebaWcaDispersionForce();
 
     try {
+        if (version > 1)
+            force->setForceGroup(node.getIntProperty("forceGroup", 0));
+        force->setEpso(   node.getDoubleProperty("Epso"));
+        force->setEpsh(   node.getDoubleProperty("Epsh"));
+        force->setRmino(  node.getDoubleProperty("Rmino"));
+        force->setRminh(  node.getDoubleProperty("Rminh"));
 
-        force->setEpso(    node.getDoubleProperty( "Epso" ) );
-        force->setEpsh(    node.getDoubleProperty( "Epsh" ) );
-        force->setRmino(   node.getDoubleProperty( "Rmino" ) );
-        force->setRminh(   node.getDoubleProperty( "Rminh" ) );
 
-
-        force->setAwater(  node.getDoubleProperty( "Awater" ) );
-        force->setShctd(   node.getDoubleProperty( "Shctd" ) );
-        force->setDispoff( node.getDoubleProperty( "Dispoff" ) );
-        force->setSlevy(   node.getDoubleProperty( "Slevy" ) );
+        force->setAwater( node.getDoubleProperty("Awater"));
+        force->setShctd(  node.getDoubleProperty("Shctd"));
+        force->setDispoff(node.getDoubleProperty("Dispoff"));
+        force->setSlevy(  node.getDoubleProperty("Slevy"));
 
         const SerializationNode& particles = node.getChildNode("WcaDispersionParticles");
         for (unsigned int ii = 0; ii < particles.getChildren().size(); ii++) {
             const SerializationNode& particle = particles.getChildren()[ii];
-            force->addParticle( particle.getDoubleProperty("radius"), particle.getDoubleProperty("epsilon"));
+            force->addParticle(particle.getDoubleProperty("radius"), particle.getDoubleProperty("epsilon"));
         }
 
     }

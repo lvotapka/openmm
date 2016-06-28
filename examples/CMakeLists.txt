@@ -28,7 +28,7 @@ FOREACH(EX_ROOT ${CPP_EXAMPLES})
         SET_TARGET_PROPERTIES(${EX_ROOT}
             PROPERTIES
             PROJECT_LABEL "Example - ${EX_ROOT}"
-            LINK_FLAGS "${EXTRA_COMPILE_FLAGS}"
+            LINK_FLAGS "${EXTRA_LINK_FLAGS}"
             COMPILE_FLAGS "${EXTRA_COMPILE_FLAGS}")
         TARGET_LINK_LIBRARIES(${EX_ROOT} ${SHARED_TARGET})
     ENDIF (OPENMM_BUILD_SHARED_LIB)
@@ -40,7 +40,7 @@ FOREACH(EX_ROOT ${CPP_EXAMPLES})
         SET_TARGET_PROPERTIES(${EX_STATIC}
             PROPERTIES
             PROJECT_LABEL "Example - ${EX_STATIC}"
-            LINK_FLAGS "${EXTRA_COMPILE_FLAGS}"
+            LINK_FLAGS "${EXTRA_LINK_FLAGS}"
             COMPILE_FLAGS "${EXTRA_COMPILE_FLAGS} -DOPENMM_USE_STATIC_LIBRARIES")
         TARGET_LINK_LIBRARIES(${EX_STATIC} ${STATIC_TARGET})
     ENDIF (OPENMM_BUILD_STATIC_LIB)
@@ -62,7 +62,7 @@ IF(OPENMM_BUILD_C_AND_FORTRAN_WRAPPERS)
             SET_TARGET_PROPERTIES(${EX_ROOT}
                 PROPERTIES
                 PROJECT_LABEL "Example C - ${EX_ROOT}"
-                LINK_FLAGS "${EXTRA_COMPILE_FLAGS}"
+                LINK_FLAGS "${EXTRA_LINK_FLAGS}"
                 COMPILE_FLAGS "${EXTRA_COMPILE_FLAGS}")
             TARGET_LINK_LIBRARIES(${EX_ROOT} ${SHARED_TARGET})
             ADD_DEPENDENCIES(${EX_ROOT} ApiWrappers)
@@ -77,7 +77,7 @@ IF(OPENMM_BUILD_C_AND_FORTRAN_WRAPPERS)
             SET_TARGET_PROPERTIES(${EX_STATIC}
                 PROPERTIES
                 PROJECT_LABEL "Example C - ${EX_STATIC}"
-                LINK_FLAGS "${EXTRA_COMPILE_FLAGS}"
+                LINK_FLAGS "${EXTRA_LINK_FLAGS}"
                 COMPILE_FLAGS "${EXTRA_COMPILE_FLAGS} -DOPENMM_USE_STATIC_LIBRARIES")
             TARGET_LINK_LIBRARIES(${EX_STATIC} ${STATIC_TARGET})
             ADD_DEPENDENCIES(${EX_STATIC} ApiWrappers)
@@ -93,7 +93,7 @@ FOREACH(EX_ROOT ${F_EXAMPLES})
     INSTALL(FILES ${EX_ROOT}.f90 DESTINATION examples)
 ENDFOREACH(EX_ROOT ${F_EXAMPLES})
 
-INSTALL(FILES simulateAmber.py simulatePdb.py simulateGromacs.py testInstallation.py argon-chemical-potential.py input.inpcrd input.prmtop input.pdb input.gro input.top
+INSTALL(FILES simulateAmber.py simulatePdb.py simulateGromacs.py benchmark.py argon-chemical-potential.py input.inpcrd input.prmtop input.pdb input.gro input.top 5dfr_minimized.pdb 5dfr_solv-cube_equil.pdb
         DESTINATION examples)
 
 INSTALL(FILES VisualStudio/HelloArgon.vcproj 

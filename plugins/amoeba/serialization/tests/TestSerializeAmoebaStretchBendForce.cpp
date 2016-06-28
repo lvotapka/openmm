@@ -6,7 +6,7 @@
  * Biological Structures at Stanford, funded under the NIH Roadmap for        *
  * Medical Research, grant U54 GM072970. See https://simtk.org.               *
  *                                                                            *
- * Portions copyright (c) 2010 Stanford University and the Authors.           *
+ * Portions copyright (c) 2010-2016 Stanford University and the Authors.      *
  * Authors: Peter Eastman                                                     *
  * Contributors:                                                              *
  *                                                                            *
@@ -45,9 +45,11 @@ void testSerialization() {
     // Create a Force.
 
     AmoebaStretchBendForce force1;
-    force1.addStretchBend(0, 1, 3, 1.0, 1.2, 150.1, 83.2);
-    force1.addStretchBend(2, 4, 4, 1.1, 2.2, 180.1, 89.2);
-    force1.addStretchBend(5, 0, 1, 3.1, 8.2, 140.1, 98.2);
+    force1.setForceGroup(3);
+    force1.addStretchBend(0, 1, 3, 1.0, 1.2, 150.1, 83.2, 100.);
+    force1.addStretchBend(2, 4, 4, 1.1, 2.2, 180.1, 89.2, 100.);
+    force1.addStretchBend(5, 0, 1, 3.1, 8.2, 140.1, 98.2, 100.);
+    force1.setUsesPeriodicBoundaryConditions(true);
 
     // Serialize and then deserialize it.
 
@@ -57,6 +59,8 @@ void testSerialization() {
 
     // Compare the two forces to see if they are identical.  
     AmoebaStretchBendForce& force2 = *copy;
+    ASSERT_EQUAL(force1.getForceGroup(), force2.getForceGroup());
+    ASSERT_EQUAL(force1.usesPeriodicBoundaryConditions(), force2.usesPeriodicBoundaryConditions());
     ASSERT_EQUAL(force1.getNumStretchBends(), force2.getNumStretchBends());
     for (unsigned int ii = 0; ii < static_cast<unsigned int>(force1.getNumStretchBends()); ii++) {
         int p11, p12, p13;
@@ -64,10 +68,10 @@ void testSerialization() {
         double dAB1, dAB2;
         double dCB1, dCB2;
         double angle1, angle2;
-        double k1, k2;
+        double k11, k12, k21, k22;
 
-        force1.getStretchBendParameters(ii, p11, p12, p13, dAB1, dCB1, angle1, k1);
-        force2.getStretchBendParameters(ii, p21, p22, p23, dAB2, dCB2, angle2, k2);
+        force1.getStretchBendParameters(ii, p11, p12, p13, dAB1, dCB1, angle1, k11, k12);
+        force2.getStretchBendParameters(ii, p21, p22, p23, dAB2, dCB2, angle2, k21, k22);
 
         ASSERT_EQUAL(p11, p21);
         ASSERT_EQUAL(p12, p22);
@@ -75,7 +79,8 @@ void testSerialization() {
         ASSERT_EQUAL(dAB1, dAB2);
         ASSERT_EQUAL(dCB1, dCB2);
         ASSERT_EQUAL(angle1, angle2);
-        ASSERT_EQUAL(k1, k2);
+        ASSERT_EQUAL(k11, k21);
+        ASSERT_EQUAL(k12, k22);
     }
 }
 

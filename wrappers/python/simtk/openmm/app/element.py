@@ -28,12 +28,18 @@ DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
 OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
+from __future__ import absolute_import
 __author__ = "Christopher M. Bruns"
 __version__ = "1.0"
 
-
+import sys
+from collections import OrderedDict
 from simtk.unit import daltons, is_quantity
-import copy_reg
+if sys.version_info >= (3, 0):
+    import copyreg
+else:
+    import copy_reg as copyreg
+
 
 class Element(object):
     """An Element represents a chemical element.
@@ -47,15 +53,21 @@ class Element(object):
 
     _elements_by_symbol = {}
     _elements_by_atomic_number = {}
+    _elements_by_mass = None
 
     def __init__(self, number, name, symbol, mass):
         """Create a new element
 
-        Parameters:
-        number (int) The atomic number of the element
-        name (string) The name of the element
-        symbol (string) The chemical symbol of the element
-        mass (float) The atomic mass of the element
+        Parameters
+        ----------
+        number : int
+            The atomic number of the element
+        name : string
+            The name of the element
+        symbol : string
+            The chemical symbol of the element
+        mass : float
+            The atomic mass of the element
         """
         ## The atomic number of the element
         self._atomic_number = number
@@ -67,8 +79,11 @@ class Element(object):
         self._mass = mass
         # Index this element in a global table
         s = symbol.strip().upper()
+        ## If we add a new element, we need to re-hash elements by mass
+        Element._elements_by_mass = None
 
-        assert s not in Element._elements_by_symbol
+        if s in Element._elements_by_symbol:
+            raise ValueError('Duplicate element symbol %s' % s)
         Element._elements_by_symbol[s] = self
         if number in Element._elements_by_atomic_number:
             other_element = Element._elements_by_atomic_number[number]
@@ -96,20 +111,45 @@ class Element(object):
         """
         Get the element whose mass is CLOSEST to the requested mass. This method
         should not be used for repartitioned masses
+
+        Parameters
+        ----------
+        mass : float or Quantity
+            Mass of the atom to find the element for. Units assumed to be
+            daltons if not specified
+
+        Returns
+        -------
+        Element
+            The element whose atomic mass is closest to the input mass
         """
         # Assume masses are in daltons if they are not units
-        if not is_quantity(mass):
-            mass = mass * daltons
+        if is_quantity(mass):
+            mass = mass.value_in_unit(daltons)
+        if mass < 0:
+            raise ValueError('Invalid Higgs field')
+        # If this is our first time calling getByMass (or we added an element
+        # since the last call), re-generate the ordered by-mass dict cache
+        if Element._elements_by_mass is None:
+            Element._elements_by_mass = OrderedDict()
+            for elem in sorted(Element._elements_by_symbol.values(),
+                               key=lambda x: x.mass):
+                Element._elements_by_mass[elem.mass.value_in_unit(daltons)] = elem
+
         diff = mass
         best_guess = None
 
-        for key in Element._elements_by_atomic_number:
-            element = Element._elements_by_atomic_number[key]
-            massdiff = abs(element.mass - mass)
+        for elemmass, element in _iteritems(Element._elements_by_mass):
+            massdiff = abs(elemmass - mass)
             if massdiff < diff:
                 best_guess = element
                 diff = massdiff
+            if elemmass > mass:
+                # Elements are only getting heavier, so bail out early
+                return best_guess
 
+        # This really should only happen if we wanted ununoctium or something
+        # bigger... won't really happen but still make sure we return an Element
         return best_guess
 
     @property
@@ -143,8 +183,11 @@ def get_by_symbol(symbol):
 def _pickle_element(element):
     return (get_by_symbol, (element.symbol,))
 
-copy_reg.pickle(Element, _pickle_element)
+copyreg.pickle(Element, _pickle_element)
 
+# NOTE: getElementByMass assumes all masses are Quantity instances with unit
+# "daltons". All elements need to obey this assumption, or that method will
+# fail. No checking is done in getElementByMass for performance reasons
 hydrogen =       Element(  1, "hydrogen", "H", 1.007947*daltons)
 deuterium =      Element(  1, "deuterium", "D", 2.01355321270*daltons)
 helium =         Element(  2, "helium", "He", 4.003*daltons)
@@ -267,3 +310,10 @@ ununhexium =     Element(116, "ununhexium",     "Uuh", 292*daltons)
 # relational operators will work with any chosen name
 sulphur = sulfur
 aluminium = aluminum
+
+if sys.version_info >= (3, 0):
+    def _iteritems(dict):
+        return dict.items()
+else:
+    def _iteritems(dict):
+        return dict.iteritems()

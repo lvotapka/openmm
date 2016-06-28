@@ -6,7 +6,7 @@
  * Biological Structures at Stanford, funded under the NIH Roadmap for        *
  * Medical Research, grant U54 GM072970. See https://simtk.org.               *
  *                                                                            *
- * Portions copyright (c) 2008-2009 Stanford University and the Authors.      *
+ * Portions copyright (c) 2008-2016 Stanford University and the Authors.      *
  * Authors:                                                                   *
  * Contributors:                                                              *
  *                                                                            *
@@ -36,7 +36,7 @@
 
 using namespace OpenMM;
 
-AmoebaPiTorsionForce::AmoebaPiTorsionForce() {
+AmoebaPiTorsionForce::AmoebaPiTorsionForce() : usePeriodic(false) {
 }
 
 int AmoebaPiTorsionForce::addPiTorsion(int particle1, int particle2, int particle3, int particle4, int particle5, int particle6,  double k) {
@@ -44,7 +44,7 @@ int AmoebaPiTorsionForce::addPiTorsion(int particle1, int particle2, int particl
     return piTorsions.size()-1;
 }
 
-void AmoebaPiTorsionForce::getPiTorsionParameters(int index, int& particle1, int& particle2, int& particle3, int& particle4, int& particle5, int& particle6, double& k ) const {
+void AmoebaPiTorsionForce::getPiTorsionParameters(int index, int& particle1, int& particle2, int& particle3, int& particle4, int& particle5, int& particle6, double& k) const {
     particle1       = piTorsions[index].particle1;
     particle2       = piTorsions[index].particle2;
     particle3       = piTorsions[index].particle3;
@@ -54,7 +54,7 @@ void AmoebaPiTorsionForce::getPiTorsionParameters(int index, int& particle1, int
     k               = piTorsions[index].k;
 }
 
-void AmoebaPiTorsionForce::setPiTorsionParameters(int index, int particle1, int particle2, int particle3, int particle4, int particle5, int particle6,  double k ) {
+void AmoebaPiTorsionForce::setPiTorsionParameters(int index, int particle1, int particle2, int particle3, int particle4, int particle5, int particle6,  double k) {
     piTorsions[index].particle1  = particle1;
     piTorsions[index].particle2  = particle2;
     piTorsions[index].particle3  = particle3;
@@ -70,4 +70,12 @@ ForceImpl* AmoebaPiTorsionForce::createImpl() const {
 
 void AmoebaPiTorsionForce::updateParametersInContext(Context& context) {
     dynamic_cast<AmoebaPiTorsionForceImpl&>(getImplInContext(context)).updateParametersInContext(getContextImpl(context));
+}
+
+void AmoebaPiTorsionForce::setUsesPeriodicBoundaryConditions(bool periodic) {
+    usePeriodic = periodic;
+}
+
+bool AmoebaPiTorsionForce::usesPeriodicBoundaryConditions() const {
+    return usePeriodic;
 }

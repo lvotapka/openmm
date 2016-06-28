@@ -1,5 +1,5 @@
 
-/* Portions copyright (c) 2006-2013 Stanford University and Simbios.
+/* Portions copyright (c) 2006-2015 Stanford University and Simbios.
  * Authors: Peter Eastman
  * Contributors: 
  *
@@ -23,8 +23,6 @@
  * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#include "SimTKOpenMMCommon.h"
-#include "SimTKOpenMMLog.h"
 #include "SimTKOpenMMUtilities.h"
 #include "CpuLangevinDynamics.h"
 
@@ -47,6 +45,16 @@ public:
     }
     void execute(ThreadPool& threads, int threadIndex) {
         owner.threadUpdate2(threadIndex);
+    }
+    CpuLangevinDynamics& owner;
+};
+
+class CpuLangevinDynamics::Update3Task : public ThreadPool::Task {
+public:
+    Update3Task(CpuLangevinDynamics& owner) : owner(owner) {
+    }
+    void execute(ThreadPool& threads, int threadIndex) {
+        owner.threadUpdate3(threadIndex);
     }
     CpuLangevinDynamics& owner;
 };
@@ -94,6 +102,23 @@ void CpuLangevinDynamics::updatePart2(int numberOfAtoms, vector<RealVec>& atomCo
     threads.waitForThreads();
 }
 
+void CpuLangevinDynamics::updatePart3(int numberOfAtoms, vector<RealVec>& atomCoordinates, vector<RealVec>& velocities,
+                                       vector<RealOpenMM>& inverseMasses, vector<RealVec>& xPrime) {
+    // Record the parameters for the threads.
+    
+    this->numberOfAtoms = numberOfAtoms;
+    this->atomCoordinates = &atomCoordinates[0];
+    this->velocities = &velocities[0];
+    this->inverseMasses = &inverseMasses[0];
+    this->xPrime = &xPrime[0];
+    
+    // Signal the threads to start running and wait for them to finish.
+    
+    Update3Task task(*this);
+    threads.execute(task);
+    threads.waitForThreads();
+}
+
 void CpuLangevinDynamics::threadUpdate1(int threadIndex) {
     const RealOpenMM tau = getTau();
     const RealOpenMM vscale = EXP(-getDeltaT()/tau);
@@ -124,3 +149,16 @@ void CpuLangevinDynamics::threadUpdate2(int threadIndex) {
         }
    }
 }
+
+void CpuLangevinDynamics::threadUpdate3(int threadIndex) {
+   const RealOpenMM invStepSize = 1.0/getDeltaT();
+    int start = threadIndex*numberOfAtoms/threads.getNumThreads();
+    int end = (threadIndex+1)*numberOfAtoms/threads.getNumThreads();
+
+   for (int i = start; i < end; ++i)
+       if (inverseMasses[i] != 0.0) {
+            velocities[i] = (xPrime[i]-atomCoordinates[i])*invStepSize;
+            atomCoordinates[i] = xPrime[i];
+       }
+}
+

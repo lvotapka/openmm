@@ -9,7 +9,7 @@
  * Biological Structures at Stanford, funded under the NIH Roadmap for        *
  * Medical Research, grant U54 GM072970. See https://simtk.org.               *
  *                                                                            *
- * Portions copyright (c) 2008-2013 Stanford University and the Authors.      *
+ * Portions copyright (c) 2008-2016 Stanford University and the Authors.      *
  * Authors: Peter Eastman                                                     *
  * Contributors:                                                              *
  *                                                                            *
@@ -37,11 +37,14 @@
 #include "SimTKOpenMMRealType.h"
 #include "ReferenceNeighborList.h"
 #include "lepton/CompiledExpression.h"
+#include "lepton/CustomFunction.h"
 #include "lepton/ExpressionProgram.h"
 
-class CpuObc;
-class CpuGBVI;
+namespace OpenMM {
+
+class ReferenceObc;
 class ReferenceAndersenThermostat;
+class ReferenceCustomCentroidBondIxn;
 class ReferenceCustomCompoundBondIxn;
 class ReferenceCustomHbondIxn;
 class ReferenceCustomManyParticleIxn;
@@ -53,8 +56,6 @@ class ReferenceVariableStochasticDynamics;
 class ReferenceVariableVerletDynamics;
 class ReferenceVerletDynamics;
 class ReferenceCustomDynamics;
-
-namespace OpenMM {
 
 /**
  * This kernel is invoked at the beginning and end of force and energy computations.  It gives the
@@ -89,11 +90,13 @@ public:
      * @param includeForce  true if forces should be computed
      * @param includeEnergy true if potential energy should be computed
      * @param groups        a set of bit flags for which force groups to include
+     * @param valid         the method may set this to false to indicate the results are invalid and the force/energy
+     *                      calculation should be repeated
      * @return the potential energy of the system.  This value is added to all values returned by ForceImpls'
      * calcForcesAndEnergy() methods.  That is, each force kernel may <i>either</i> return its contribution to the
      * energy directly, <i>or</i> add it to an internal buffer so that it will be included here.
      */
-    double finishComputation(ContextImpl& context, bool includeForce, bool includeEnergy, int groups);
+    double finishComputation(ContextImpl& context, bool includeForce, bool includeEnergy, int groups, bool& valid);
 private:
     std::vector<RealVec> savedForces;
 };
@@ -169,7 +172,7 @@ public:
      * @param b      the vector defining the second edge of the periodic box
      * @param c      the vector defining the third edge of the periodic box
      */
-    void setPeriodicBoxVectors(ContextImpl& context, const Vec3& a, const Vec3& b, const Vec3& c) const;
+    void setPeriodicBoxVectors(ContextImpl& context, const Vec3& a, const Vec3& b, const Vec3& c);
     /**
      * Create a checkpoint recording the current state of the Context.
      * 
@@ -277,6 +280,7 @@ private:
     int numBonds;
     int **bondIndexArray;
     RealOpenMM **bondParamArray;
+    bool usePeriodic;
 };
 
 /**
@@ -316,6 +320,7 @@ private:
     RealOpenMM **bondParamArray;
     Lepton::CompiledExpression energyExpression, forceExpression;
     std::vector<std::string> parameterNames, globalParameterNames;
+    bool usePeriodic;
 };
 
 /**
@@ -353,6 +358,7 @@ private:
     int numAngles;
     int **angleIndexArray;
     RealOpenMM **angleParamArray;
+    bool usePeriodic;
 };
 
 /**
@@ -392,6 +398,7 @@ private:
     RealOpenMM **angleParamArray;
     Lepton::CompiledExpression energyExpression, forceExpression;
     std::vector<std::string> parameterNames, globalParameterNames;
+    bool usePeriodic;
 };
 
 /**
@@ -429,6 +436,7 @@ private:
     int numTorsions;
     int **torsionIndexArray;
     RealOpenMM **torsionParamArray;
+    bool usePeriodic;
 };
 
 /**
@@ -466,6 +474,7 @@ private:
     int numTorsions;
     int **torsionIndexArray;
     RealOpenMM **torsionParamArray;
+    bool usePeriodic;
 };
 
 /**
@@ -491,10 +500,18 @@ public:
      * @return the potential energy due to the force
      */
     double execute(ContextImpl& context, bool includeForces, bool includeEnergy);
+    /**
+     * Copy changed parameters over to a context.
+     *
+     * @param context    the context to copy parameters to
+     * @param force      the CMAPTorsionForce to copy the parameters from
+     */
+    void copyParametersToContext(ContextImpl& context, const CMAPTorsionForce& force);
 private:
     std::vector<std::vector<std::vector<RealOpenMM> > > coeff;
     std::vector<int> torsionMaps;
     std::vector<std::vector<int> > torsionIndices;
+    bool usePeriodic;
 };
 
 /**
@@ -534,6 +551,7 @@ private:
     RealOpenMM **torsionParamArray;
     Lepton::CompiledExpression energyExpression, forceExpression;
     std::vector<std::string> parameterNames, globalParameterNames;
+    bool usePeriodic;
 };
 
 /**
@@ -568,6 +586,15 @@ public:
      * @param force      the NonbondedForce to copy the parameters from
      */
     void copyParametersToContext(ContextImpl& context, const NonbondedForce& force);
+    /**
+     * Get the parameters being used for PME.
+     * 
+     * @param alpha   the separation parameter
+     * @param nx      the number of grid points along the X axis
+     * @param ny      the number of grid points along the Y axis
+     * @param nz      the number of grid points along the Z axis
+     */
+    void getPMEParameters(double& alpha, int& nx, int& ny, int& nz) const;
 private:
     int numParticles, num14;
     int **bonded14IndexArray;
@@ -658,38 +685,7 @@ public:
      */
     void copyParametersToContext(ContextImpl& context, const GBSAOBCForce& force);
 private:
-    CpuObc* obc;
-    std::vector<RealOpenMM> charges;
-    bool isPeriodic;
-};
-
-/**
- * This kernel is invoked by GBVIForce to calculate the forces acting on the system.
- */
-class ReferenceCalcGBVIForceKernel : public CalcGBVIForceKernel {
-public:
-    ReferenceCalcGBVIForceKernel(std::string name, const Platform& platform) : CalcGBVIForceKernel(name, platform) {
-    }
-    ~ReferenceCalcGBVIForceKernel();
-    /**
-     * Initialize the kernel.
-     * 
-     * @param system       the System this kernel will be applied to
-     * @param force        the GBVIForce this kernel will be used for
-     * @param scaled radii the scaled radii (Eq. 5 of Labute paper)
-     */
-    void initialize(const System& system, const GBVIForce& force, const std::vector<double> & scaledRadii);
-    /**
-     * Execute the kernel to calculate the forces and/or energy.
-     *
-     * @param context        the context in which to execute this kernel
-     * @param includeForces  true if forces should be calculated
-     * @param includeEnergy  true if the energy should be calculated
-     * @return the potential energy due to the force
-     */
-    double execute(ContextImpl& context, bool includeForces, bool includeEnergy);
-private:
-    CpuGBVI * gbvi;
+    ReferenceObc* obc;
     std::vector<RealOpenMM> charges;
     bool isPeriodic;
 };
@@ -776,11 +772,23 @@ public:
      */
     void copyParametersToContext(ContextImpl& context, const CustomExternalForce& force);
 private:
+    class PeriodicDistanceFunction;
     int numParticles;
     std::vector<int> particles;
     RealOpenMM **particleParamArray;
     Lepton::CompiledExpression energyExpression, forceExpressionX, forceExpressionY, forceExpressionZ;
     std::vector<std::string> parameterNames, globalParameterNames;
+    RealVec* boxVectors;
+};
+
+class ReferenceCalcCustomExternalForceKernel::PeriodicDistanceFunction : public Lepton::CustomFunction {
+public:
+    RealVec** boxVectorHandle;
+    PeriodicDistanceFunction(RealVec** boxVectorHandle);
+    int getNumArguments() const;
+    double evaluate(const double* arguments) const;
+    double evaluateDerivative(const double* arguments, const int* derivOrder) const;
+    Lepton::CustomFunction* clone() const;
 };
 
 /**
@@ -825,6 +833,45 @@ private:
 };
 
 /**
+ * This kernel is invoked by CustomCentroidBondForce to calculate the forces acting on the system.
+ */
+class ReferenceCalcCustomCentroidBondForceKernel : public CalcCustomCentroidBondForceKernel {
+public:
+    ReferenceCalcCustomCentroidBondForceKernel(std::string name, const Platform& platform) : CalcCustomCentroidBondForceKernel(name, platform), ixn(NULL) {
+    }
+    ~ReferenceCalcCustomCentroidBondForceKernel();
+    /**
+     * Initialize the kernel.
+     *
+     * @param system     the System this kernel will be applied to
+     * @param force      the CustomCentroidBondForce this kernel will be used for
+     */
+    void initialize(const System& system, const CustomCentroidBondForce& force);
+    /**
+     * Execute the kernel to calculate the forces and/or energy.
+     *
+     * @param context        the context in which to execute this kernel
+     * @param includeForces  true if forces should be calculated
+     * @param includeEnergy  true if the energy should be calculated
+     * @return the potential energy due to the force
+     */
+    double execute(ContextImpl& context, bool includeForces, bool includeEnergy);
+    /**
+     * Copy changed parameters over to a context.
+     *
+     * @param context    the context to copy parameters to
+     * @param force      the CustomCentroidBondForce to copy the parameters from
+     */
+    void copyParametersToContext(ContextImpl& context, const CustomCentroidBondForce& force);
+private:
+    int numBonds, numParticles;
+    RealOpenMM **bondParamArray;
+    ReferenceCustomCentroidBondIxn* ixn;
+    std::vector<std::string> globalParameterNames;
+    bool usePeriodic;
+};
+
+/**
  * This kernel is invoked by CustomCompoundBondForce to calculate the forces acting on the system.
  */
 class ReferenceCalcCustomCompoundBondForceKernel : public CalcCustomCompoundBondForceKernel {
@@ -856,10 +903,11 @@ public:
      */
     void copyParametersToContext(ContextImpl& context, const CustomCompoundBondForce& force);
 private:
-    int numBonds, numParticles;
+    int numBonds;
     RealOpenMM **bondParamArray;
     ReferenceCustomCompoundBondIxn* ixn;
     std::vector<std::string> globalParameterNames;
+    bool usePeriodic;
 };
 
 /**

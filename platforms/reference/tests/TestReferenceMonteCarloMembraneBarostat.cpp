@@ -6,7 +6,7 @@
  * Biological Structures at Stanford, funded under the NIH Roadmap for        *
  * Medical Research, grant U54 GM072970. See https://simtk.org.               *
  *                                                                            *
- * Portions copyright (c) 2008-2014 Stanford University and the Authors.      *
+ * Portions copyright (c) 2008-2016 Stanford University and the Authors.      *
  * Authors: Peter Eastman                                                     *
  * Contributors:                                                              *
  *                                                                            *
@@ -49,6 +49,8 @@
 using namespace OpenMM;
 using namespace std;
 
+ReferencePlatform platform;
+
 void testIdealGas(MonteCarloMembraneBarostat::XYMode xymode, MonteCarloMembraneBarostat::ZMode zmode) {
     const int numParticles = 64;
     const int frequency = 1;
@@ -63,7 +65,6 @@ void testIdealGas(MonteCarloMembraneBarostat::XYMode xymode, MonteCarloMembraneB
 
     // Create a gas of noninteracting particles.
 
-    ReferencePlatform platform;
     System system;
     system.setDefaultPeriodicBoxVectors(Vec3(initialLength, 0, 0), Vec3(0, 0.5*initialLength, 0), Vec3(0, 0, 2*initialLength));
     vector<Vec3> positions(numParticles);
@@ -75,11 +76,13 @@ void testIdealGas(MonteCarloMembraneBarostat::XYMode xymode, MonteCarloMembraneB
     }
     MonteCarloMembraneBarostat* barostat = new MonteCarloMembraneBarostat(pressure, tension, temp[0], xymode, zmode, frequency);
     system.addForce(barostat);
+    ASSERT(barostat->usesPeriodicBoundaryConditions());
+    ASSERT(system.usesPeriodicBoundaryConditions());
 
     // Test it for three different temperatures.
 
     for (int i = 0; i < 3; i++) {
-        barostat->setTemperature(temp[i]);
+        barostat->setDefaultTemperature(temp[i]);
         LangevinIntegrator integrator(temp[i], 0.1, 0.01);
         Context context(system, integrator, platform);
         context.setPositions(positions);
@@ -119,7 +122,6 @@ void testRandomSeed() {
     const double temp = 100.0;
     const double pressure = 1.5;
     const double tension = 0.3;
-    ReferencePlatform platform;
     System system;
     system.setDefaultPeriodicBoxVectors(Vec3(8, 0, 0), Vec3(0, 8, 0), Vec3(0, 0, 8));
     VerletIntegrator integrator(0.01);
@@ -132,6 +134,8 @@ void testRandomSeed() {
     system.addForce(forceField);
     MonteCarloMembraneBarostat* barostat = new MonteCarloMembraneBarostat(pressure, tension, temp, MonteCarloMembraneBarostat::XYAnisotropic, MonteCarloMembraneBarostat::ZFree, 1);
     system.addForce(barostat);
+    ASSERT(barostat->usesPeriodicBoundaryConditions());
+    ASSERT(system.usesPeriodicBoundaryConditions());
     vector<Vec3> positions(numParticles);
     vector<Vec3> velocities(numParticles);
     for (int i = 0; i < numParticles; ++i) {

@@ -44,19 +44,19 @@ class OPENMM_EXPORT VirtualSite;
 /**
  * This class represents a molecular system.  The definition of a System involves
  * four elements:
- * 
+ *
  * <ol>
  * <li>The set of particles in the system</li>
  * <li>The forces acting on them</li>
  * <li>Pairs of particles whose separation should be constrained to a fixed value</li>
  * <li>For periodic systems, the dimensions of the periodic box</li>
  * </ol>
- * 
+ *
  * The particles and constraints are defined directly by the System object, while
  * forces are defined by objects that extend the Force class.  After creating a
  * System, call addParticle() once for each particle, addConstraint() for each constraint,
  * and addForce() for each Force.
- * 
+ *
  * In addition, particles may be designated as "virtual sites".  These are particles
  * whose positions are computed automatically based on the positions of other particles.
  * To define a virtual site, call setVirtualSite(), passing in a VirtualSite object
@@ -94,7 +94,7 @@ public:
      * the particle and not modify its position or velocity.  This is most often
      * used for virtual sites, but can also be used as a way to prevent a particle
      * from moving.
-     * 
+     *
      * @param index the index of the particle for which to get the mass
      */
     double getParticleMass(int index) const;
@@ -103,7 +103,7 @@ public:
      * the particle and not modify its position or velocity.  This is most often
      * used for virtual sites, but can also be used as a way to prevent a particle
      * from moving.
-     * 
+     *
      * @param index  the index of the particle for which to set the mass
      * @param mass   the mass of the particle
      */
@@ -120,7 +120,7 @@ public:
     void setVirtualSite(int index, VirtualSite* virtualSite);
     /**
      * Get whether a particle is a VirtualSite.
-     * 
+     *
      * @param index  the index of the particle to check
      */
     bool isVirtualSite(int index) const {
@@ -129,7 +129,7 @@ public:
     /**
      * Get VirtualSite object for a particle.  If the particle is not a virtual
      * site, this throws an exception.
-     * 
+     *
      * @param index  the index of the particle to get
      */
     const VirtualSite& getVirtualSite(int index) const;
@@ -151,23 +151,29 @@ public:
     int addConstraint(int particle1, int particle2, double distance);
     /**
      * Get the parameters defining a distance constraint.
-     * 
+     *
      * @param index     the index of the constraint for which to get parameters
-     * @param particle1 the index of the first particle involved in the constraint
-     * @param particle2 the index of the second particle involved in the constraint
-     * @param distance  the required distance between the two particles, measured in nm
+     * @param[out] particle1 the index of the first particle involved in the constraint
+     * @param[out] particle2 the index of the second particle involved in the constraint
+     * @param[out] distance  the required distance between the two particles, measured in nm
      */
     void getConstraintParameters(int index, int& particle1, int& particle2, double& distance) const;
     /**
      * Set the parameters defining a distance constraint.  Particles whose mass is 0 cannot participate
      * in constraints.
-     * 
+     *
      * @param index     the index of the constraint for which to set parameters
      * @param particle1 the index of the first particle involved in the constraint
      * @param particle2 the index of the second particle involved in the constraint
      * @param distance  the required distance between the two particles, measured in nm
      */
     void setConstraintParameters(int index, int particle1, int particle2, double distance);
+    /**
+     * Remove a constraint from the System.
+     *
+     * @param index    the index of the constraint to remove
+     */
+    void removeConstraint(int index);
     /**
      * Add a Force to the System.  The Force should have been created on the heap with the
      * "new" operator.  The System takes over ownership of it, and deletes the Force when the
@@ -188,7 +194,7 @@ public:
     }
     /**
      * Get a const reference to one of the Forces in this System.
-     * 
+     *
      * @param index  the index of the Force to get
      */
     const Force& getForce(int index) const;
@@ -199,16 +205,20 @@ public:
      */
     Force& getForce(int index);
     /**
+     * Remove a Force from the System.  The memory associated with the removed Force
+     * object is deleted.
+     *
+     * @param index   the index of the Force to remove
+     */
+    void removeForce(int index);
+    /**
      * Get the default values of the vectors defining the axes of the periodic box (measured in nm).  Any newly
      * created Context will have its box vectors set to these.  They will affect
      * any Force added to the System that uses periodic boundary conditions.
      *
-     * Currently, only rectangular boxes are supported.  This means that a, b, and c must be aligned with the
-     * x, y, and z axes respectively.  Future releases may support arbitrary triclinic boxes.
-     *
-     * @param a      on exit, this contains the vector defining the first edge of the periodic box
-     * @param b      on exit, this contains the vector defining the second edge of the periodic box
-     * @param c      on exit, this contains the vector defining the third edge of the periodic box
+     * @param[out] a     the vector defining the first edge of the periodic box
+     * @param[out] b     the vector defining the second edge of the periodic box
+     * @param[out] c     the vector defining the third edge of the periodic box
      */
     void getDefaultPeriodicBoxVectors(Vec3& a, Vec3& b, Vec3& c) const;
     /**
@@ -216,14 +226,24 @@ public:
      * created Context will have its box vectors set to these.  They will affect
      * any Force added to the System that uses periodic boundary conditions.
      *
-     * Currently, only rectangular boxes are supported.  This means that a, b, and c must be aligned with the
-     * x, y, and z axes respectively.  Future releases may support arbitrary triclinic boxes.
+     * Triclinic boxes are supported, but the vectors must satisfy certain requirements.  In particular,
+     * a must point in the x direction, b must point "mostly" in the y direction, and c must point "mostly"
+     * in the z direction.  See the documentation for details.
      *
      * @param a      the vector defining the first edge of the periodic box
      * @param b      the vector defining the second edge of the periodic box
      * @param c      the vector defining the third edge of the periodic box
      */
     void setDefaultPeriodicBoxVectors(const Vec3& a, const Vec3& b, const Vec3& c);
+    /**
+     * Returns whether or not any forces in this System use periodic boundaries.
+     *
+     * If a force in this System does not implement usesPeriodicBoundaryConditions
+     * a OpenMM::OpenMMException is thrown
+     *
+     * @return true if at least one force uses PBC and false otherwise
+     */
+    bool usesPeriodicBoundaryConditions() const;
 private:
     class ConstraintInfo;
     Vec3 periodicBoxVectors[3];

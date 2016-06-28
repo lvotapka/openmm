@@ -8,11 +8,10 @@ Structures at Stanford, funded under the NIH Roadmap for Medical Research,
 grant U54 GM072970. See https://simtk.org.  This code was originally part of
 the ParmEd program and was ported for use with OpenMM.
 
-Copyright (c) 2014 the Authors
+Copyright (c) 2014-2016 the Authors
 
 Author: Jason M. Swails
 Contributors:
-Date: August 19, 2014
 
 Permission is hereby granted, free of charge, to any person obtaining a
 copy of this software and associated documentation files (the "Software"),
@@ -32,18 +31,21 @@ DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
 OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
-from __future__ import division
+from __future__ import division, absolute_import, print_function
 
 from functools import wraps
 from math import pi, cos, sin, sqrt
 import os
+import re
+import sys
 import simtk.openmm as mm
 from simtk.openmm.vec3 import Vec3
 import simtk.unit as u
 from simtk.openmm.app import (forcefield as ff, Topology, element)
 from simtk.openmm.app.amberprmtopfile import HCT, OBC1, OBC2, GBn, GBn2
 from simtk.openmm.app.internal.customgbforces import (GBSAHCTForce,
-                GBSAOBC1Force, GBSAOBC2Force, GBSAGBnForce, GBSAGBn2Force, convertParameters)
+                GBSAOBC1Force, GBSAOBC2Force, GBSAGBnForce, GBSAGBn2Force)
+from simtk.openmm.app.internal.unitcell import computePeriodicBoxVectors
 # CHARMM imports
 from simtk.openmm.app.internal.charmm.topologyobjects import (
                 ResidueList, AtomList, TrackedList, Bond, Angle, Dihedral,
@@ -56,7 +58,8 @@ import warnings
 
 TINY = 1e-8
 WATNAMES = ('WAT', 'HOH', 'TIP3', 'TIP4', 'TIP5', 'SPCE', 'SPC')
-
+if sys.version_info >= (3, 0):
+    xrange = range
 
 def _catchindexerror(func):
     """
@@ -68,7 +71,7 @@ def _catchindexerror(func):
         """ Catch the index error """
         try:
             return func(*args, **kwargs)
-        except IndexError, e:
+        except IndexError as e:
             raise CharmmPSFError('Array is too short: %s' % e)
 
     return newfunc
@@ -96,15 +99,22 @@ class _ZeroDict(dict):
                 return [0, 0], []
             return 0, []
 
+def _strip_optunit(thing, unit):
+    """
+    Strips optional units, converting to specified unit type. If no unit
+    present, it just returns the number
+    """
+    if u.is_quantity(thing):
+        return thing.value_in_unit(unit)
+    return thing
+
 # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
-class CharmmPsfFile(object):
-    """
-    A chemical structure instantiated from CHARMM files.
+_resre = re.compile(r'(-?\d+)([a-zA-Z]*)')
 
-    Example:
-    >>> cs = CharmmPsfFile("testfiles/test.psf")
-    
+class CharmmPsfFile(object):
+    """A chemical structure instantiated from CHARMM files.
+
     This structure has numerous attributes that are lists of the elements of
     this structure, including atoms, bonds, torsions, etc. The attributes are
         - residue_list
@@ -121,13 +131,14 @@ class CharmmPsfFile(object):
 
     Additional attribute is available if a CharmmParameterSet is loaded into
     this structure.
-        
+
         - urey_bradley_list
 
     The lengths of each of these lists gives the pointers (e.g., natom, nres,
     etc.)
 
-    Example:
+    Examples
+    --------
     >>> cs = CharmmPsfFile("testfiles/test.psf")
     >>> len(cs.atom_list)
     33
@@ -146,19 +157,21 @@ class CharmmPsfFile(object):
     CMAP_FORCE_GROUP = 5
     NONBONDED_FORCE_GROUP = 6
     GB_FORCE_GROUP = 6
-    
+
     @_catchindexerror
     def __init__(self, psf_name):
-        """
-        Opens and parses a PSF file, then instantiates a CharmmPsfFile
+        """Opens and parses a PSF file, then instantiates a CharmmPsfFile
         instance from the data.
-            
-        Parameters:
-            psf_name (str) : Name of the PSF file (it must exist)
-        
-        Exceptions Raised:
-            IOError : If file "psf_name" does not exist
-            CharmmPSFError: If any parsing errors are encountered
+
+        Parameters
+        ----------
+        psf_name : str
+            Name of the PSF file (it must exist)
+
+        Raises
+        ------
+        IOError : If file "psf_name" does not exist
+        CharmmPSFError: If any parsing errors are encountered
         """
         conv = CharmmPsfFile._convert
         # Make sure the file exists
@@ -191,11 +204,13 @@ class CharmmPsfFile(object):
         atom_list = AtomList()
         for i in xrange(natom):
             words = psfsections['NATOM'][1][i].split()
-            atid = int(words[0])
-            if atid != i + 1:
-                raise CharmmPSFError('Nonsequential atoms detected!')
             system = words[1]
-            resid = conv(words[2], int, 'residue number')
+            rematch = _resre.match(words[2])
+            if not rematch:
+                raise RuntimeError('Could not parse residue number %s' %
+                                   words[2])
+            resid, inscode = rematch.groups()
+            resid = int(resid)
             resname = words[3]
             name = words[4]
             attype = words[5]
@@ -208,7 +223,7 @@ class CharmmPsfFile(object):
             mass = conv(words[7], float, 'atomic mass')
             props = words[8:]
             atom = residue_list.add_atom(system, resid, resname, name,
-                                         attype, charge, mass, props)
+                            attype, charge, mass, inscode, props)
             atom_list.append(atom)
         atom_list.assign_indexes()
         atom_list.changed = False
@@ -369,40 +384,44 @@ class CharmmPsfFile(object):
 
     @staticmethod
     def _convert(string, type, message):
-        """
-        Converts a string to a specific type, making sure to raise
+        """Converts a string to a specific type, making sure to raise
         CharmmPSFError with the given message in the event of a failure.
 
-        Parameters:
-            - string (str) : Input string to process
-            - type (type) : Type of data to convert to
-            - message (str) : Error message to put in exception if failed
+        Parameters
+        ----------
+        string : str
+            Input string to process
+        type : type
+            Type of data to convert to
+        message : str
+            Error message to put in exception if failed
         """
         try:
             return type(string)
-        except ValueError, e:
-            print e
+        except ValueError as e:
+            print(e)
             raise CharmmPSFError('Could not convert %s' % message)
 
     @staticmethod
     def _parse_psf_section(psf):
-        """
-        This method parses a section of the PSF file
+        """This method parses a section of the PSF file
 
-        Parameters:
-            - psf (CharmmFile) : Open file that is pointing to the first line
-                                 of the section that is to be parsed
-        
-        Returns:
-            (title, pointers, data)
+        Parameters
+        ----------
+         psf : CharmmFile
+             Open file that is pointing to the first line of the section
+             that is to be parsed
 
-            - title (str) : The label of the PSF section we are parsing
-            - pointers (int/tuple of ints) : If one pointer is set, pointers is
-                    simply the integer that is value of that pointer. Otherwise
-                    it is a tuple with every pointer value defined in the first
-                    line
-            - data (list) : A list of all data in the parsed section converted
-                    to `dtype'
+        Returns
+        --------
+        str
+            The label of the PSF section we are parsing
+        int/tuple of ints
+            If one pointer is set, pointers is simply the integer that is
+            value of that pointer. Otherwise it is a tuple with every pointer
+            value defined in the first line
+        list
+            A list of all data in the parsed section converted to `dtype'
         """
         conv = CharmmPsfFile._convert
         line = psf.readline()
@@ -442,195 +461,26 @@ class CharmmPsfFile(object):
                 line = psf.readline().strip()
         return title, pointers, data
 
-    def writePsf(self, dest, vmd=False):
-        """
-        Writes a PSF file from the stored molecule
-
-        Parameters:
-            - dest (str or file-like) : The place to write the output PSF file.
-                    If it has a "write" attribute, it will be used to print the
-                    PSF file. Otherwise, it will be treated like a string and a
-                    file will be opened, printed, then closed
-            - vmd (bool) : If True, it will write out a PSF in the format that
-                    VMD prints it in (i.e., no NUMLP/NUMLPH or MOLNT sections)
-        Example:
-            >>> cs = CharmmPsfFile('testfiles/test.psf')
-            >>> cs.writePsf('testfiles/test2.psf')
-        """
-        # See if this is an extended format
-        ext = 'EXT' in self.flags
-        own_handle = False
-        # Index the atoms and residues
-        self.residue_list.assign_indexes()
-        self.atom_list.assign_indexes()
-        if not hasattr(dest, 'write'):
-            own_handle = True
-            dest = open(dest, 'w')
-
-        # Assign the formats we need to write with
-        if ext:
-            atmfmt1 = ('%10d %-8s %-8i %-8s %-8s %4d %10.6f %13.4f' + 11*' ')
-            atmfmt2 = ('%10d %-8s %-8i %-8s %-8s %-4s %10.6f %13.4f' + 11*' ')
-            intfmt = '%10d' # For pointers
-        else:
-            atmfmt1 = ('%8d %-4s %-4i %-4s %-4s %4d %10.6f %13.4f' + 11*' ')
-            atmfmt2 = ('%8d %-4s %-4i %-4s %-4s %-4s %10.6f %13.4f' + 11*' ')
-            intfmt = '%8d' # For pointers
-
-        # Now print the header then the title
-        dest.write('PSF ' + ' '.join(self.flags) + '\n')
-        dest.write('\n')
-        dest.write(intfmt % len(self.title) + ' !NTITLE\n')
-        dest.write('\n'.join(self.title) + '\n\n')
-        # Now time for the atoms
-        dest.write(intfmt % len(self.atom_list) + ' !NATOM\n')
-        # atmfmt1 is for CHARMM format (i.e., atom types are integers)
-        # atmfmt is for XPLOR format (i.e., atom types are strings)
-        for i, atom in enumerate(self.atom_list):
-            if isinstance(atom.attype, str):
-                fmt = atmfmt2
-            else:
-                fmt = atmfmt1
-            atmstr = fmt % (i+1, atom.system, atom.residue.resnum,
-                            atom.residue.resname, atom.name, atom.attype,
-                            atom.charge, atom.mass)
-            dest.write(atmstr + '   '.join(atom.props) + '\n')
-        dest.write('\n')
-        # Bonds
-        dest.write(intfmt % len(self.bond_list) + ' !NBOND: bonds\n')
-        for i, bond in enumerate(self.bond_list):
-            dest.write((intfmt*2) % (bond.atom1.idx+1, bond.atom2.idx+1))
-            if i % 4 == 3: # Write 4 bonds per line
-                dest.write('\n')
-        # See if we need to terminate
-        if len(self.bond_list) % 4 != 0 or len(self.bond_list) == 0:
-            dest.write('\n')
-        dest.write('\n')
-        # Angles
-        dest.write(intfmt % len(self.angle_list) + ' !NTHETA: angles\n')
-        for i, angle in enumerate(self.angle_list):
-            dest.write((intfmt*3) % (angle.atom1.idx+1, angle.atom2.idx+1,
-                                     angle.atom3.idx+1)
-            )
-            if i % 3 == 2: # Write 3 angles per line
-                dest.write('\n')
-        # See if we need to terminate
-        if len(self.angle_list) % 3 != 0 or len(self.angle_list) == 0:
-            dest.write('\n')
-        dest.write('\n')
-        # Dihedrals
-        dest.write(intfmt % len(self.dihedral_list) + ' !NPHI: dihedrals\n')
-        for i, dih in enumerate(self.dihedral_list):
-            dest.write((intfmt*4) % (dih.atom1.idx+1, dih.atom2.idx+1,
-                                     dih.atom3.idx+1, dih.atom4.idx+1)
-            )
-            if i % 2 == 1: # Write 2 dihedrals per line
-                dest.write('\n')
-        # See if we need to terminate
-        if len(self.dihedral_list) % 2 != 0 or len(self.dihedral_list) == 0:
-            dest.write('\n')
-        dest.write('\n')
-        # Impropers
-        dest.write(intfmt % len(self.improper_list) + ' !NIMPHI: impropers\n')
-        for i, imp in enumerate(self.improper_list):
-            dest.write((intfmt*4) % (imp.atom1.idx+1, imp.atom2.idx+1,
-                                     imp.atom3.idx+1, imp.atom4.idx+1)
-            )
-            if i % 2 == 1: # Write 2 dihedrals per line
-                dest.write('\n')
-        # See if we need to terminate
-        if len(self.improper_list) % 2 != 0 or len(self.improper_list) == 0:
-            dest.write('\n')
-        dest.write('\n')
-        # Donor section
-        dest.write(intfmt % len(self.donor_list) + ' !NDON: donors\n')
-        for i, don in enumerate(self.donor_list):
-            dest.write((intfmt*2) % (don.atom1.idx+1, don.atom2.idx+1))
-            if i % 4 == 3: # 4 donors per line
-                dest.write('\n')
-        if len(self.donor_list) % 4 != 0 or len(self.donor_list) == 0:
-            dest.write('\n')
-        dest.write('\n')
-        # Acceptor section
-        dest.write(intfmt % len(self.acceptor_list) + ' !NACC: acceptors\n')
-        for i, acc in enumerate(self.acceptor_list):
-            dest.write((intfmt*2) % (acc.atom1.idx+1, acc.atom2.idx+1))
-            if i % 4 == 3: # 4 donors per line
-                dest.write('\n')
-        if len(self.acceptor_list) % 4 != 0 or len(self.acceptor_list) == 0:
-            dest.write('\n')
-        dest.write('\n')
-        # NNB section ??
-        dest.write(intfmt % 0 + ' !NNB\n\n')
-        for i in range(len(self.atom_list)):
-            dest.write(intfmt % 0)
-            if i % 8 == 7: # Write 8 0's per line
-                dest.write('\n')
-        if len(self.atom_list) % 8 != 0: dest.write('\n')
-        dest.write('\n')
-        # Group section
-        dest.write((intfmt*2) % (len(self.group_list), self.group_list.nst2))
-        dest.write(' !NGRP NST2\n')
-        for i, gp in enumerate(self.group_list):
-            dest.write((intfmt*3) % (gp.bs, gp.type, gp.move))
-            if i % 3 == 2: dest.write('\n')
-        if len(self.group_list) % 3 != 0 or len(self.group_list) == 0:
-            dest.write('\n')
-        dest.write('\n')
-        # The next two sections are never found in VMD prmtops...
-        if not vmd:
-            # Molecule section; first set molecularity
-            set_molecules(self.atom_list)
-            mollist = [a.marked for a in self.atom_list]
-            dest.write(intfmt % max(mollist) + ' !MOLNT\n')
-            for i, atom in enumerate(self.atom_list):
-                dest.write(intfmt % atom.marked)
-                if i % 8 == 7: dest.write('\n')
-            if len(self.atom_list) % 8 != 0: dest.write('\n')
-            dest.write('\n')
-            # NUMLP/NUMLPH section
-            dest.write((intfmt*2) % (0, 0) + ' !NUMLP NUMLPH\n')
-            dest.write('\n')
-        # CMAP section
-        dest.write(intfmt % len(self.cmap_list) + ' !NCRTERM: cross-terms\n')
-        for i, cmap in enumerate(self.cmap_list):
-            dest.write((intfmt*4) % (cmap.atom1.idx+1, cmap.atom2.idx+1,
-                                     cmap.atom3.idx+1, cmap.atom4.idx+1)
-            )
-            if cmap.consecutive:
-                dest.write((intfmt*4) % (cmap.atom2.idx+1, cmap.atom3.idx+1,
-                                         cmap.atom4.idx+1, cmap.atom5.idx+1)
-                )
-            else:
-                dest.write((intfmt*4) % (cmap.atom5.idx+1, cmap.atom6.idx+1,
-                                         cmap.atom7.idx+1, cmap.atom8.idx+1)
-                )
-            dest.write('\n')
-        # Done!
-        # If we opened our own handle, close it
-        if own_handle:
-            dest.close()
-        
     def loadParameters(self, parmset):
-        """
-        Loads parameters from a parameter set that was loaded via CHARMM RTF,
+        """Loads parameters from a parameter set that was loaded via CHARMM RTF,
         PAR, and STR files.
 
-        Parameters:
-            - parmset (CharmmParameterSet) : List of all parameters
+        Parameters
+        ----------
+        parmset : CharmmParameterSet
+            List of all parameters
 
-        Notes:
-            - If any parameters that are necessary cannot be found, a
-              MissingParameter exception is raised.
-
-            - If any dihedral or improper parameters cannot be found, I will try
-              inserting wildcards (at either end for dihedrals and as the two
-              central atoms in impropers) and see if that matches.  Wild-cards
-              will apply ONLY if specific parameters cannot be found.
-
-            - This method will expand the dihedral_parameter_list attribute by
-              adding a separate Dihedral object for each term for types that
-              have a multi-term expansion
+        Notes
+        -----
+        - If any parameters that are necessary cannot be found, a
+          MissingParameter exception is raised.
+        - If any dihedral or improper parameters cannot be found, I will try
+          inserting wildcards (at either end for dihedrals and as the two
+          central atoms in impropers) and see if that matches.  Wild-cards
+          will apply ONLY if specific parameters cannot be found.
+        - This method will expand the dihedral_parameter_list attribute by
+          adding a separate Dihedral object for each term for types that
+          have a multi-term expansion
         """
         # First load the atom types
         types_are_int = False
@@ -738,13 +588,22 @@ class CharmmPsfFile(object):
 
     def setBox(self, a, b, c, alpha=90.0*u.degrees, beta=90.0*u.degrees,
                gamma=90.0*u.degrees):
-        """
-        Sets the periodic box boundary conditions.
+        """Sets the periodic box boundary conditions.
 
-        Parameters:
-            - a, b, c (floats) : Lengths of the periodic cell
-            - alpha, beta, gamma (floats, optional) : Angles between the
-                periodic cells.
+        Parameters
+        ----------
+        a : length
+            Lengths of the periodic cell
+        b : length
+            Lengths of the periodic cell
+        c : length
+            Lengths of the periodic cell
+        alpha : floats, optional
+            Angles between the periodic cell vectors.
+        beta : floats, optional
+            Angles between the periodic cell vectors.
+        gamma : floats, optional
+            Angles between the periodic cell vectors.
         """
         try:
             # Since we are setting the box, delete the cached box lengths if we
@@ -752,8 +611,7 @@ class CharmmPsfFile(object):
             del self._boxLengths
         except AttributeError:
             pass
-        self.box_vectors = _box_vectors_from_lengths_angles(a, b, c,
-                                                            alpha, beta, gamma)
+        self.box_vectors = computePeriodicBoxVectors(a, b, c, alpha, beta, gamma)
         # If we already have a _topology instance, then we have possibly changed
         # the existence of box information (whether or not this is a periodic
         # system), so delete any cached reference to a topology so it's
@@ -771,17 +629,18 @@ class CharmmPsfFile(object):
             pass
         # Cache the topology for easy returning later
         self._topology = topology = Topology()
-        
+
         last_chain = None
         last_residue = None
         # Add each chain (separate 'system's) and residue
         for atom in self.atom_list:
+            resid = '%d%s' % (atom.residue.idx, atom.residue.inscode)
             if atom.system != last_chain:
-                chain = topology.addChain()
+                chain = topology.addChain(atom.system)
                 last_chain = atom.system
-            if atom.residue.idx != last_residue:
-                last_residue = atom.residue.idx
-                residue = topology.addResidue(atom.residue.resname, chain)
+            if resid != last_residue:
+                last_residue = resid
+                residue = topology.addResidue(atom.residue.resname, chain, resid)
             if atom.type is not None:
                 # This is the most reliable way of determining the element
                 atomic_num = atom.type.atomic_number
@@ -804,88 +663,6 @@ class CharmmPsfFile(object):
 
         return topology
 
-    def _get_gb_params(self, gb_model=HCT):
-        """ Gets the GB parameters. Need this method to special-case GB neck """
-        screen = [0 for atom in self.atom_list]
-        if gb_model is GBn:
-            radii = _bondi_radii(self.atom_list)
-            screen = [0.5 for atom in self.atom_list]
-            for i, atom in enumerate(self.atom_list):
-                if atom.type.atomic_number == 6:
-                    screen[i] = 0.48435382330
-                elif atom.type.atomic_number == 1:
-                    screen[i] = 1.09085413633
-                elif atom.type.atomic_number == 7:
-                    screen[i] = 0.700147318409
-                elif atom.type.atomic_number == 8:
-                    screen[i] = 1.06557401132
-                elif atom.type.atomic_number == 16:
-                    screen[i] = 0.602256336067
-        elif gb_model is GBn2:
-            radii = _mbondi3_radii(self.atom_list)
-            # Add non-optimized values as defaults
-            alpha = [1.0 for i in self.atom_list]
-            beta = [0.8 for i in self.atom_list]
-            gamma = [4.85 for i in self.atom_list]
-            screen = [0.5 for i in self.atom_list]
-            for i, atom in enumerate(self.atom_list):
-                if atom.type.atomic_number == 6:
-                    screen[i] = 1.058554
-                    alpha[i] = 0.733756
-                    beta[i] = 0.506378
-                    gamma[i] = 0.205844
-                elif atom.type.atomic_number == 1:
-                    screen[i] = 1.425952
-                    alpha[i] = 0.788440
-                    beta[i] = 0.798699
-                    gamma[i] = 0.437334
-                elif atom.type.atomic_number == 7:
-                    screen[i] = 0.733599
-                    alpha[i] = 0.503364
-                    beta[i] = 0.316828
-                    gamma[i] = 0.192915
-                elif atom.type.atomic_number == 8:
-                    screen[i] = 1.061039
-                    alpha[i] = 0.867814
-                    beta[i] = 0.876635
-                    gamma[i] = 0.387882
-                elif atom.type.atomic_number == 16:
-                    screen[i] = -0.703469
-                    alpha[i] = 0.867814
-                    beta[i] = 0.876635
-                    gamma[i] = 0.387882
-        else:
-            # Set the default screening parameters
-            for i, atom in enumerate(self.atom_list):
-                if atom.type.atomic_number == 1:
-                    screen[i] = 0.85
-                elif atom.type.atomic_number == 6:
-                    screen[i] = 0.72
-                elif atom.type.atomic_number == 7:
-                    screen[i] = 0.79
-                elif atom.type.atomic_number == 8:
-                    screen[i] = 0.85
-                elif atom.type.atomic_number == 9:
-                    screen[i] = 0.88
-                elif atom.type.atomic_number == 15:
-                    screen[i] = 0.86
-                elif atom.type.atomic_number == 16:
-                    screen[i] = 0.96
-                else:
-                    screen[i] = 0.8
-            # Determine which radii set we need
-            if gb_model is OBC1 or gb_model is OBC2:
-                radii = _mbondi2_radii(self.atom_list)
-            elif gb_model is HCT:
-                radii = _mbondi_radii(self.atom_list)
-
-        length_conv = u.angstrom.conversion_factor_to(u.nanometer)
-        radii = [x * length_conv for x in radii]
-
-        if gb_model is GBn2:
-            return zip(radii, screen, alpha, beta, gamma)
-        return zip(radii, screen)
-
     def createSystem(self, params, nonbondedMethod=ff.NoCutoff,
                      nonbondedCutoff=1.0*u.nanometer,
                      switchDistance=0.0*u.nanometer,
@@ -902,52 +679,60 @@ class CharmmPsfFile(object):
                      ewaldErrorTolerance=0.0005,
                      flexibleConstraints=True,
                      verbose=False):
-        """
-        Construct an OpenMM System representing the topology described by the
+        """Construct an OpenMM System representing the topology described by the
         prmtop file. You MUST have loaded a parameter set into this PSF before
         calling createSystem. If not, AttributeError will be raised. ValueError
         is raised for illegal input.
 
-        Parameters:
-         -  params (CharmmParameterSet) The parameter set to use to parametrize
-               this molecule
-         -  nonbondedMethod (object=NoCutoff) The method to use for nonbonded
-               interactions. Allowed values are NoCutoff, CutoffNonPeriodic,
-               CutoffPeriodic, Ewald, or PME.
-         -  nonbondedCutoff (distance=1*nanometer) The cutoff distance to use
-               for nonbonded interactions.
-         -  switchDistance (distance=0*nanometer) The distance at which the
-               switching function is active for nonbonded interactions. If the
-               switchDistance evaluates to boolean False (if it is 0), no
-               switching function will be used. Illegal values will raise a
-               ValueError
-         -  constraints (object=None) Specifies which bonds or angles should be
-               implemented with constraints. Allowed values are None, HBonds,
-               AllBonds, or HAngles.
-         -  rigidWater (boolean=True) If true, water molecules will be fully
-               rigid regardless of the value passed for the constraints argument
-         -  implicitSolvent (object=None) If not None, the implicit solvent
-               model to use. Allowed values are HCT, OBC1, OBC2, or GBn
-         -  implicitSolventKappa (float=None): Debye screening parameter to
-               model salt concentrations in GB solvent.
-         -  implicitSolventSaltConc (float=0.0*u.moles/u.liter): Salt
-               concentration for GB simulations. Converted to Debye length
-               `kappa'
-         -  temperature (float=298.15*u.kelvin): Temperature used in the salt
-               concentration-to-kappa conversion for GB salt concentration term
-         -  soluteDielectric (float=1.0) The solute dielectric constant to use
-               in the implicit solvent model.
-         -  solventDielectric (float=78.5) The solvent dielectric constant to
-               use in the implicit solvent model.
-         -  removeCMMotion (boolean=True) If true, a CMMotionRemover will be
-               added to the System.
-         -  hydrogenMass (mass=None) The mass to use for hydrogen atoms bound to
-               heavy atoms. Any mass added to a hydrogen is subtracted from the
-               heavy atom to keep their total mass the same.
-         -  ewaldErrorTolerance (float=0.0005) The error tolerance to use if the
-               nonbonded method is Ewald or PME.
-         -  flexibleConstraints (bool=True) Are our constraints flexible or not?
-         -  verbose (bool=False) Optionally prints out a running progress report
+        Parameters
+        ----------
+        params : CharmmParameterSet
+            The parameter set to use to parametrize this molecule
+        nonbondedMethod : object=NoCutoff
+            The method to use for nonbonded interactions. Allowed values are
+            NoCutoff, CutoffNonPeriodic, CutoffPeriodic, Ewald, or PME.
+        nonbondedCutoff : distance=1*nanometer
+            The cutoff distance to use for nonbonded interactions.
+        switchDistance : distance=0*nanometer
+            The distance at which the switching function is active for nonbonded
+            interactions. If the switchDistance evaluates to boolean False (if
+            it is 0), no switching function will be used. Illegal values will
+            raise a ValueError
+        constraints : object=None
+            Specifies which bonds or angles should be implemented with
+            constraints. Allowed values are None, HBonds, AllBonds, or HAngles.
+        rigidWater : boolean=True
+            If true, water molecules will be fully rigid regardless of the value
+            passed for the constraints argument
+        implicitSolvent : object=None
+            If not None, the implicit solvent model to use. Allowed values are
+            HCT, OBC1, OBC2, or GBn
+        implicitSolventKappa : float=None
+            Debye screening parameter to model salt concentrations in GB
+            solvent.
+        implicitSolventSaltConc : float=0.0*u.moles/u.liter
+            Salt concentration for GB simulations. Converted to Debye length
+            `kappa'
+        temperature : float=298.15*u.kelvin
+            Temperature used in the salt concentration-to-kappa conversion for
+            GB salt concentration term
+        soluteDielectric : float=1.0
+            The solute dielectric constant to use in the implicit solvent model.
+        solventDielectric : float=78.5
+            The solvent dielectric constant to use in the implicit solvent
+            model.
+        removeCMMotion : boolean=True
+            If true, a CMMotionRemover will be added to the System.
+        hydrogenMass : mass=None
+            The mass to use for hydrogen atoms bound to heavy atoms. Any mass
+            added to a hydrogen is subtracted from the heavy atom to keep their
+            total mass the same.
+        ewaldErrorTolerance : float=0.0005
+            The error tolerance to use if the nonbonded method is Ewald or PME.
+        flexibleConstraints : bool=True
+            Are our constraints flexible or not?
+        verbose : bool=False
+            Optionally prints out a running progress report
         """
         # Load the parameter set
         self.loadParameters(params.condense())
@@ -971,7 +756,7 @@ class CharmmPsfFile(object):
             raise ValueError('Illegal implicit solvent model choice.')
         if not constraints in (None, ff.HAngles, ff.HBonds, ff.AllBonds):
             raise ValueError('Illegal constraints choice')
-      
+
         # Define conversion factors
         length_conv = u.angstrom.conversion_factor_to(u.nanometer)
         _chmfrc = u.kilocalorie_per_mole/(u.angstrom*u.angstrom)
@@ -983,7 +768,7 @@ class CharmmPsfFile(object):
         dihe_frc_conv = u.kilocalorie_per_mole.conversion_factor_to(
                             u.kilojoule_per_mole)
         ene_conv = dihe_frc_conv
-      
+
         # Create the system and determine if any of our atoms have NBFIX (and
         # therefore requires a CustomNonbondedForce instead)
         typenames = set()
@@ -1185,10 +970,11 @@ class CharmmPsfFile(object):
             # See if we need to use a switching function
             if switchDistance and nonbondedMethod is not ff.NoCutoff:
                 # make sure it's legal
-                if switchDistance >= nonbondedCutoff:
+                if (_strip_optunit(switchDistance, u.nanometer) >=
+                        _strip_optunit(nonbondedCutoff, u.nanometer)):
                     raise ValueError('switchDistance is too large compared '
                                      'to the cutoff!')
-                if abs(switchDistance) != switchDistance:
+                if _strip_optunit(switchDistance, u.nanometer) < 0:
                     # Detects negatives for both Quantity and float
                     raise ValueError('switchDistance must be non-negative!')
                 force.setUseSwitchingFunction(True)
@@ -1229,10 +1015,11 @@ class CharmmPsfFile(object):
             # See if we need to use a switching function
             if switchDistance and nonbondedMethod is not ff.NoCutoff:
                 # make sure it's legal
-                if switchDistance >= nonbondedCutoff:
+                if (_strip_optunit(switchDistance, u.nanometer) >=
+                        _strip_optunit(nonbondedCutoff, u.nanometer)):
                     raise ValueError('switchDistance is too large compared '
                                      'to the cutoff!')
-                if abs(switchDistance) != switchDistance:
+                if _strip_optunit(switchDistance, u.nanometer) < 0:
                     # Detects negatives for both Quantity and float
                     raise ValueError('switchDistance must be non-negative!')
                 force.setUseSwitchingFunction(True)
@@ -1315,11 +1102,15 @@ class CharmmPsfFile(object):
                 raise ValueError('Unrecognized nonbonded method')
             if switchDistance and nonbondedMethod is not ff.NoCutoff:
                 # make sure it's legal
-                if switchDistance >= nonbondedCutoff:
+                if (_strip_optunit(switchDistance, u.nanometer) >=
+                        _strip_optunit(nonbondedCutoff, u.nanometer)):
                     raise ValueError('switchDistance is too large compared '
                                      'to the cutoff!')
-                    cforce.setUseSwitchingFunction(True)
-                    cforce.setSwitchingDistance(switchDistance)
+                if _strip_optunit(switchDistance, u.nanometer) < 0:
+                    # Detects negatives for both Quantity and float
+                    raise ValueError('switchDistance must be non-negative!')
+                cforce.setUseSwitchingFunction(True)
+                cforce.setSwitchingDistance(switchDistance)
             for i in lj_idx_list:
                 cforce.addParticle((i - 1,)) # adjust for indexing from 0
 
@@ -1373,9 +1164,6 @@ class CharmmPsfFile(object):
         # Add GB model if we're doing one
         if implicitSolvent is not None:
             if verbose: print('Adding GB parameters...')
-            gb_parms = self._get_gb_params(implicitSolvent)
-            gb_parms = convertParameters(gb_parms, str(implicitSolvent))
-
             # If implicitSolventKappa is None, compute it from salt
             # concentration
             if implicitSolventKappa is None:
@@ -1414,8 +1202,9 @@ class CharmmPsfFile(object):
             elif implicitSolvent is GBn2:
                 gb = GBSAGBn2Force(solventDielectric, soluteDielectric, None,
                                    cutoff, kappa=implicitSolventKappa)
-            for i, atom in enumerate(self.atom_list):
-                gb.addParticle([atom.charge] + list(gb_parms[i]))
+            gb_parms = gb.getStandardParameters(self.topology)
+            for atom, gb_parm in zip(self.atom_list, gb_parms):
+                gb.addParticle([atom.charge] + list(gb_parm))
             # Set cutoff method
             if nonbondedMethod is ff.NoCutoff:
                 gb.setNonbondedMethod(mm.NonbondedForce.NoCutoff)
@@ -1428,6 +1217,7 @@ class CharmmPsfFile(object):
             else:
                 raise ValueError('Illegal nonbonded method for use with GBSA')
             gb.setForceGroup(self.GB_FORCE_GROUP)
+            gb.finalize()
             system.addForce(gb)
             force.setReactionFieldDielectric(1.0) # applies to NonbondedForce
 
@@ -1502,7 +1292,7 @@ class CharmmPsfFile(object):
     def boxLengths(self, stuff):
         raise RuntimeError('Use setBox to set a box with lengths and angles '
                            'or set the boxVectors attribute with box vectors')
-    
+
     @property
     def boxVectors(self):
         """ Return the box vectors """
@@ -1522,58 +1312,6 @@ class CharmmPsfFile(object):
     def deleteCmap(self):
         """ Deletes the CMAP terms from the CHARMM PSF """
         self.cmap_list = TrackedList()
-
-def _box_vectors_from_lengths_angles(a, b, c, alpha, beta, gamma):
-    """
-    This method takes the lengths and angles from a unit cell and creates unit
-    cell vectors.
-
-    Parameters:
-        - a (unit, dimension length): Length of the first vector
-        - b (unit, dimension length): Length of the second vector
-        - c (unit, dimension length): Length of the third vector
-        - alpha (float): Angle between b and c in degrees
-        - beta (float): Angle between a and c in degrees
-        - gamma (float): Angle between a and b in degrees
-
-    Returns:
-        Tuple of box vectors (as Vec3 instances)
-   """
-    if not (u.is_quantity(a) and u.is_quantity(b) and u.is_quantity(c)):
-        raise TypeError('a, b, and c must be units of dimension length')
-    if u.is_quantity(alpha): alpha = alpha.value_in_unit(u.degree)
-    if u.is_quantity(beta): beta = beta.value_in_unit(u.degree)
-    if u.is_quantity(gamma): gamma = gamma.value_in_unit(u.degree)
-    a = a.value_in_unit(u.angstrom)
-    b = b.value_in_unit(u.angstrom)
-    c = c.value_in_unit(u.angstrom)
-
-    if alpha <= 2 * pi and beta <= 2 * pi and gamma <= 2 * pi:
-        raise ValueError('box angles must be given in degrees')
-
-    alpha *= pi / 180
-    beta *= pi / 180
-    gamma *= pi / 180
-
-    av = Vec3(a, 0.0, 0.0) * u.angstrom
-    bx = b * cos(gamma)
-    by = b * sin(gamma)
-    bz = 0.0
-    cx = c * cos(beta)
-    cy = c * (cos(alpha) - cos(beta) * cos(gamma))
-    cz = sqrt(c * c - cx * cx - cy * cy)
-   
-    # Make sure any components that are close to zero are set to zero exactly
-    if abs(bx) < TINY: bx = 0.0
-    if abs(by) < TINY: by = 0.0
-    if abs(cx) < TINY: cx = 0.0
-    if abs(cy) < TINY: cy = 0.0
-    if abs(cz) < TINY: cz = 0.0
-
-    bv = Vec3(bx, by, bz) * u.angstrom
-    cv = Vec3(cx, cy, cz) * u.angstrom
-
-    return (av, bv, cv)
 
 # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
@@ -1599,12 +1337,12 @@ def set_molecules(atom_list):
     owner = []
     # The way I do this is via a recursive algorithm, in which
     # the "set_owner" method is called for each bonded partner an atom
-    # has, which in turn calls set_owner for each of its partners and 
+    # has, which in turn calls set_owner for each of its partners and
     # so on until everything has been assigned.
     molecule_number = 1 # which molecule number we are on
     for i in range(len(atom_list)):
         # If this atom has not yet been "owned", make it the next molecule
-        # However, we only increment which molecule number we're on if 
+        # However, we only increment which molecule number we're on if
         # we actually assigned a new molecule (obviously)
         if not atom_list[i].marked:
             tmp = [i]
@@ -1625,7 +1363,7 @@ def _set_owner(atom_list, owner_array, atm, mol_id):
             owner_array.append(partner.idx)
             _set_owner(atom_list, owner_array, partner.idx, mol_id)
         elif partner.marked != mol_id:
-            raise MoleculeError('Atom %d in multiple molecules' % 
+            raise MoleculeError('Atom %d in multiple molecules' %
                                 partner.idx)
 
 # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++

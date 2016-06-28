@@ -78,7 +78,8 @@ CompiledExpression& CompiledExpression::operator=(const CompiledExpression& expr
     for (int i = 0; i < (int) operation.size(); i++)
         operation[i] = expression.operation[i]->clone();
 #ifdef LEPTON_USE_JIT
-    generateJitCode();
+    if (workspace.size() > 0)
+        generateJitCode();
 #endif
     return *this;
 }
@@ -121,7 +122,7 @@ void CompiledExpression::compileExpression(const ExpressionTreeNode& node, vecto
                 arguments[stepIndex] = args;
         }
     }
-    temps.push_back(make_pair(node, workspace.size()));
+    temps.push_back(make_pair(node, (int) workspace.size()));
     workspace.push_back(0.0);
 }
 
@@ -342,6 +343,12 @@ void CompiledExpression::generateJitCode() {
                 break;
             case Operation::ABS:
                 generateSingleArgCall(c, workspaceVar[target[step]], workspaceVar[args[0]], fabs);
+                break;
+            case Operation::FLOOR:
+                generateSingleArgCall(c, workspaceVar[target[step]], workspaceVar[args[0]], floor);
+                break;
+            case Operation::CEIL:
+                generateSingleArgCall(c, workspaceVar[target[step]], workspaceVar[args[0]], ceil);
                 break;
             default:
                 // Just invoke evaluateOperation().

@@ -6,7 +6,7 @@
  * Biological Structures at Stanford, funded under the NIH Roadmap for        *
  * Medical Research, grant U54 GM072970. See https://simtk.org.               *
  *                                                                            *
- * Portions copyright (c) 2010 Stanford University and the Authors.           *
+ * Portions copyright (c) 2010-2016 Stanford University and the Authors.      *
  * Authors: Peter Eastman                                                     *
  * Contributors:                                                              *
  *                                                                            *
@@ -42,9 +42,10 @@ AmoebaVdwForceProxy::AmoebaVdwForceProxy() : SerializationProxy("AmoebaVdwForce"
 }
 
 void AmoebaVdwForceProxy::serialize(const void* object, SerializationNode& node) const {
-    node.setIntProperty("version", 1);
+    node.setIntProperty("version", 2);
     const AmoebaVdwForce& force = *reinterpret_cast<const AmoebaVdwForce*>(object);
 
+    node.setIntProperty("forceGroup", force.getForceGroup());
     node.setStringProperty("SigmaCombiningRule", force.getSigmaCombiningRule());
     node.setStringProperty("EpsilonCombiningRule", force.getEpsilonCombiningRule());
     node.setDoubleProperty("VdwCutoff", force.getCutoff());
@@ -56,30 +57,32 @@ void AmoebaVdwForceProxy::serialize(const void* object, SerializationNode& node)
 
         int ivIndex;
         double sigma, epsilon, reductionFactor;
-        force.getParticleParameters( ii, ivIndex, sigma, epsilon, reductionFactor );
+        force.getParticleParameters(ii, ivIndex, sigma, epsilon, reductionFactor);
 
         SerializationNode& particle = particles.createChildNode("Particle");
         particle.setIntProperty("ivIndex", ivIndex).setDoubleProperty("sigma", sigma).setDoubleProperty("epsilon", epsilon).setDoubleProperty("reductionFactor", reductionFactor);
 
         std::vector< int > exclusions;
-        force.getParticleExclusions( ii,  exclusions );
+        force.getParticleExclusions(ii,  exclusions);
 
         SerializationNode& particleExclusions = particle.createChildNode("ParticleExclusions");
         for (unsigned int jj = 0; jj < exclusions.size(); jj++) {
-            particleExclusions.createChildNode( "excl" ).setIntProperty( "index", exclusions[jj] );
+            particleExclusions.createChildNode("excl").setIntProperty("index", exclusions[jj]);
         }
     }
 }
 
 void* AmoebaVdwForceProxy::deserialize(const SerializationNode& node) const {
-    if (node.getIntProperty("version") != 1)
+    int version = node.getIntProperty("version");
+    if (version < 1 || version > 2)
         throw OpenMMException("Unsupported version number");
     AmoebaVdwForce* force = new AmoebaVdwForce();
     try {
-
-        force->setSigmaCombiningRule(node.getStringProperty( "SigmaCombiningRule" ) );
-        force->setEpsilonCombiningRule(node.getStringProperty( "EpsilonCombiningRule" ) );
-        force->setCutoff(node.getDoubleProperty( "VdwCutoff" ) );
+        if (version > 1)
+            force->setForceGroup(node.getIntProperty("forceGroup", 0));
+        force->setSigmaCombiningRule(node.getStringProperty("SigmaCombiningRule"));
+        force->setEpsilonCombiningRule(node.getStringProperty("EpsilonCombiningRule"));
+        force->setCutoff(node.getDoubleProperty("VdwCutoff"));
         force->setNonbondedMethod((AmoebaVdwForce::NonbondedMethod) node.getIntProperty("method"));
 
         const SerializationNode& particles = node.getChildNode("VdwParticles");
@@ -92,9 +95,9 @@ void* AmoebaVdwForceProxy::deserialize(const SerializationNode& node) const {
             const SerializationNode& particleExclusions = particle.getChildNode("ParticleExclusions");
             std::vector< int > exclusions;
             for (unsigned int jj = 0; jj < particleExclusions.getChildren().size(); jj++) {
-                exclusions.push_back( particleExclusions.getChildren()[jj].getIntProperty("index") );
+                exclusions.push_back(particleExclusions.getChildren()[jj].getIntProperty("index"));
             }
-            force->setParticleExclusions( ii, exclusions );
+            force->setParticleExclusions(ii, exclusions);
         }
 
     }

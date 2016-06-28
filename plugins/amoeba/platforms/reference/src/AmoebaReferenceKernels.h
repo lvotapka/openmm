@@ -9,7 +9,7 @@
  * Biological Structures at Stanford, funded under the NIH Roadmap for        *
  * Medical Research, grant U54 GM072970. See https://simtk.org.               *
  *                                                                            *
- * Portions copyright (c) 2008 Stanford University and the Authors.           *
+ * Portions copyright (c) 2008-2015 Stanford University and the Authors.      *
  * Authors:                                                                   *
  * Contributors:                                                              *
  *                                                                            *
@@ -77,6 +77,7 @@ private:
     RealOpenMM globalBondCubic;
     RealOpenMM globalBondQuartic;
     const System& system;
+    bool usePeriodic;
 };
 
 /**
@@ -121,6 +122,7 @@ private:
     RealOpenMM globalAnglePentic;
     RealOpenMM globalAngleSextic;
     const System& system;
+    bool usePeriodic;
 };
 
 /**
@@ -166,6 +168,7 @@ private:
     RealOpenMM globalInPlaneAnglePentic;
     RealOpenMM globalInPlaneAngleSextic;
     const System& system;
+    bool usePeriodic;
 };
 
 /**
@@ -208,6 +211,7 @@ private:
     std::vector<int>   particle6;
     std::vector<RealOpenMM> kTorsion;
     const System& system;
+    bool usePeriodic;
 };
 
 /**
@@ -248,8 +252,10 @@ private:
     std::vector<RealOpenMM> lengthABParameters;
     std::vector<RealOpenMM> lengthCBParameters;
     std::vector<RealOpenMM> angleParameters;
-    std::vector<RealOpenMM> kParameters;
+    std::vector<RealOpenMM> k1Parameters;
+    std::vector<RealOpenMM> k2Parameters;
     const System& system;
+    bool usePeriodic;
 };
 
 /**
@@ -294,6 +300,7 @@ private:
     RealOpenMM globalOutOfPlaneBendAnglePentic;
     RealOpenMM globalOutOfPlaneBendAngleSextic;
     const System& system;
+    bool usePeriodic;
 };
 
 /**
@@ -333,6 +340,7 @@ private:
     std::vector< std::vector< std::vector< std::vector<RealOpenMM> > > > torsionTorsionGrids;
 
     const System& system;
+    bool usePeriodic;
 };
 
 /**
@@ -356,7 +364,7 @@ public:
      *
      * @return pointer to initialized instance of AmoebaReferenceMultipoleForce
      */
-    AmoebaReferenceMultipoleForce* setupAmoebaReferenceMultipoleForce(ContextImpl& context );
+    AmoebaReferenceMultipoleForce* setupAmoebaReferenceMultipoleForce(ContextImpl& context);
     /**
      * Execute the kernel to calculate the forces and/or energy.
      *
@@ -381,7 +389,7 @@ public:
      * @param outputElectrostaticPotential output potential 
      */
     void getElectrostaticPotential(ContextImpl& context, const std::vector< Vec3 >& inputGrid,
-                                   std::vector< double >& outputElectrostaticPotential );
+                                   std::vector< double >& outputElectrostaticPotential);
 
     /**
      * Get the system multipole moments.
@@ -392,7 +400,7 @@ public:
                                       dipole_x, dipole_y, dipole_z,
                                       quadrupole_xx, quadrupole_xy, quadrupole_xz,
                                       quadrupole_yx, quadrupole_yy, quadrupole_yz,
-                                      quadrupole_zx, quadrupole_zy, quadrupole_zz )
+                                      quadrupole_zx, quadrupole_zy, quadrupole_zz)
      */
     void getSystemMultipoleMoments(ContextImpl& context, std::vector< double >& outputMultipoleMoments);
     /**
@@ -402,6 +410,15 @@ public:
      * @param force      the AmoebaMultipoleForce to copy the parameters from
      */
     void copyParametersToContext(ContextImpl& context, const AmoebaMultipoleForce& force);
+    /**
+     * Get the parameters being used for PME.
+     * 
+     * @param alpha   the separation parameter
+     * @param nx      the number of grid points along the X axis
+     * @param ny      the number of grid points along the Y axis
+     * @param nz      the number of grid points along the Z axis
+     */
+    void getPMEParameters(double& alpha, int& nx, int& ny, int& nz) const;
 
 private:
 
@@ -422,6 +439,7 @@ private:
 
     int mutualInducedMaxIterations;
     RealOpenMM mutualInducedTargetEpsilon;
+    std::vector<double> extrapolationCoefficients;
 
     bool usePme;
     RealOpenMM alphaEwald;
@@ -554,14 +572,14 @@ public:
      *
      *  @return includeCavityTerm
      */
-    int getIncludeCavityTerm( void ) const;
+    int getIncludeCavityTerm() const;
 
     /**
      *  Get the number of particles.
      *
      *  @return number of particles
      */
-    int getNumParticles( void ) const;
+    int getNumParticles() const;
 
     /**
      *  Get Direct Polarization flag.
@@ -569,7 +587,7 @@ public:
      *  @return directPolarization
      *
      */
-    int getDirectPolarization( void ) const;
+    int getDirectPolarization() const;
 
     /**
      *  Get the solute dielectric.
@@ -577,7 +595,7 @@ public:
      *  @return soluteDielectric
      *
      */
-    RealOpenMM getSoluteDielectric( void ) const;
+    RealOpenMM getSoluteDielectric() const;
 
     /**
      *  Get the solvent dielectric.
@@ -585,7 +603,7 @@ public:
      *  @return solventDielectric
      *
      */
-    RealOpenMM getSolventDielectric( void ) const;
+    RealOpenMM getSolventDielectric() const;
 
     /**
      *  Get the dielectric offset.
@@ -593,7 +611,7 @@ public:
      *  @return dielectricOffset
      *
      */
-    RealOpenMM getDielectricOffset( void ) const;
+    RealOpenMM getDielectricOffset() const;
 
     /**
      *  Get the probe radius.
@@ -601,7 +619,7 @@ public:
      *  @return probeRadius
      *
      */
-    RealOpenMM getProbeRadius( void ) const;
+    RealOpenMM getProbeRadius() const;
 
     /**
      *  Get the surface area factor.
@@ -609,7 +627,7 @@ public:
      *  @return surfaceAreaFactor
      *
      */
-    RealOpenMM getSurfaceAreaFactor( void ) const;
+    RealOpenMM getSurfaceAreaFactor() const;
 
     /**
      *  Get the vector of particle radii.
@@ -617,7 +635,7 @@ public:
      *  @param atomicRadii vector of atomic radii
      *
      */
-    void getAtomicRadii( std::vector<RealOpenMM>& atomicRadii ) const;
+    void getAtomicRadii(std::vector<RealOpenMM>& atomicRadii) const;
 
     /**
      *  Get the vector of scale factors.
@@ -625,7 +643,7 @@ public:
      *  @param scaleFactors vector of scale factors
      *
      */
-    void getScaleFactors( std::vector<RealOpenMM>& scaleFactors ) const;
+    void getScaleFactors(std::vector<RealOpenMM>& scaleFactors) const;
 
     /**
      *  Get the vector of charges.
@@ -633,7 +651,7 @@ public:
      *  @param charges vector of charges
      *
      */
-    void getCharges( std::vector<RealOpenMM>& charges ) const;
+    void getCharges(std::vector<RealOpenMM>& charges) const;
 
     /**
      * Copy changed parameters over to a context.

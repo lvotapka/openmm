@@ -78,6 +78,14 @@ public:
      * @param group    the group index.  Legal values are between 0 and 31 (inclusive).
      */
     void setForceGroup(int group);
+    /**
+     * Returns whether or not this force makes use of periodic boundary
+     * conditions. This method should be overridden for all Force subclasses, or
+     * a OpenMM::OpenMMException will be thrown
+     *
+     * @return true if Force uses periodic boundaries or false if it does not
+     */
+    virtual bool usesPeriodicBoundaryConditions() const;
 protected:
     friend class ContextImpl;
     /**
@@ -90,6 +98,10 @@ protected:
      * Get the ForceImpl corresponding to this Force in a Context.
      */
     ForceImpl& getImplInContext(Context& context);
+    /**
+     * Get a const reference to the ForceImpl corresponding to this Force in a Context.
+     */
+    const ForceImpl& getImplInContext(const Context& context) const;
     /**
      * Get the ContextImpl corresponding to a Context.
      */
