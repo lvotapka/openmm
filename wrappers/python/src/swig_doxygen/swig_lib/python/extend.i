@@ -1,3 +1,27 @@
+%inline %{
+    typedef int bitmask32t;
+%}
+
+%typemap(in) bitmask32t %{
+    $1 = 0;
+#if PY_VERSION_HEX >= 0x03000000
+    if (PyLong_Check($input)) {
+        unsigned long u = PyLong_AsUnsignedLongMask($input);
+#else
+    if (PyInt_Check($input)) {
+        unsigned long u = PyInt_AsUnsignedLongMask($input);
+#endif
+        // 64-bit Windows has 32-bit longs, but other platforms have
+        // 64-bit longs
+        $1 = u & 0xffffffff;
+    } else {
+        PyErr_SetString(PyExc_ValueError, "in method $symname, argument $argnum could not be converted to type $type");
+        SWIG_fail;
+    }
+%}
+
+
+
 %extend OpenMM::Context {
   PyObject *_getStateAsLists(int getPositions,
                             int getVelocities,
@@ -5,7 +29,7 @@
                             int getEnergy,
                             int getParameters,
                             int enforcePeriodic,
-                            int groups) {
+                            bitmask32t groups) {
     State state;
     PyThreadState* _savePythonThreadState = PyEval_SaveThread();
     int types = 0;
@@ -26,55 +50,54 @@
   }
 
 
-  %pythoncode {
-    def getState(self,
-                 getPositions=False,
-                 getVelocities=False,
-                 getForces=False,
-                 getEnergy=False,
-                 getParameters=False,
-                 enforcePeriodicBox=False,
-                 groups=-1):
+  %pythoncode %{
+    def getState(self, getPositions=False, getVelocities=False,
+                 getForces=False, getEnergy=False, getParameters=False,
+                 enforcePeriodicBox=False, groups=-1):
+        """Get a State object recording the current state information stored in this context.
+
+        Parameters
+        ----------
+        getPositions : bool=False
+            whether to store particle positions in the State
+        getVelocities : bool=False
+            whether to store particle velocities in the State
+        getForces : bool=False
+            whether to store the forces acting on particles in the State
+        getEnergy : bool=False
+            whether to store potential and kinetic energy in the State
+        getParameter : bool=False
+            whether to store context parameters in the State
+        enforcePeriodicBox : bool=False
+            if false, the position of each particle will be whatever position
+            is stored in the Context, regardless of periodic boundary conditions.
+            If true, particle positions will be translated so the center of
+            every molecule lies in the same periodic box.
+        groups : set={0,1,2,...,31}
+            a set of indices for which force groups to include when computing
+            forces and energies. The default value includes all groups. groups
+            can also be passed as an unsigned integer interpreted as a bitmask,
+            in which case group i will be included if (groups&(1<<i)) != 0.
         """
-        getState(self,
-                 getPositions = False,
-                 getVelocities = False,
-                 getForces = False,
-                 getEnergy = False,
-                 getParameters = False,
-                 enforcePeriodicBox = False,
-                 groups = -1)
-              -> State
-        
-        Get a State object recording the current state information stored in this context.
-        
-        Parameters:
-         - getPositions (bool=False) whether to store particle positions in the State
-         - getVelocities (bool=False) whether to store particle velocities in the State
-         - getForces (bool=False) whether to store the forces acting on particles in the State
-         - getEnergy (bool=False) whether to store potential and kinetic energy in the State
-         - getParameter (bool=False) whether to store context parameters in the State
-         - enforcePeriodicBox (bool=False) if false, the position of each particle will be whatever position is stored in the Context, regardless of periodic boundary conditions.  If true, particle positions will be translated so the center of every molecule lies in the same periodic box.
-         - groups (int=-1) a set of bit flags for which force groups to include when computing forces and energies.  Group i will be included if (groups&(1<<i)) != 0.  The default value includes all groups.
-        """
-        
-        if getPositions: getP=1
-        else: getP=0
-        if getVelocities: getV=1
-        else: getV=0
-        if getForces: getF=1
-        else: getF=0
-        if getEnergy: getE=1
-        else: getE=0
-        if getParameters: getPa=1
-        else: getPa=0
-        if enforcePeriodicBox: enforcePeriodic=1
-        else: enforcePeriodic=0
+        getP, getV, getF, getE, getPa, enforcePeriodic = map(bool,
+            (getPositions, getVelocities, getForces, getEnergy, getParameters,
+             enforcePeriodicBox))
+
+        try:
+            # is the input integer-like?
+            groups_mask = int(groups)
+        except TypeError:
+            if isinstance(groups, set):
+                # nope, okay, then it should be an set
+                groups_mask = functools.reduce(operator.or_,
+                        ((1<<x) & 0xffffffff for x in groups))
+            else:
+                raise TypeError('%s is neither an int nor set' % groups)
 
         (simTime, periodicBoxVectorsList, energy, coordList, velList,
          forceList, paramMap) = \
-            self._getStateAsLists(getP, getV, getF, getE, getPa, enforcePeriodic, groups)
-        
+            self._getStateAsLists(getP, getV, getF, getE, getPa, enforcePeriodic, groups_mask)
+
         state = State(simTime=simTime,
                       energy=energy,
                       coordList=coordList,
@@ -83,11 +106,11 @@
                       periodicBoxVectorsList=periodicBoxVectorsList,
                       paramMap=paramMap)
         return state
-  
+
     def setState(self, state):
         """
         setState(Context self, State state)
-        
+
         Copy information from a State object into this Context.  This restores the Context to
         approximately the same state it was in when the State was created.  If the State does not include
         a piece of information (e.g. positions or velocities), that aspect of the Context is
@@ -107,8 +130,8 @@
         if state._paramMap is not None:
              for param in state._paramMap:
                  self.setParameter(param, state._paramMap[param])
-  }
-  
+  %}
+
   %feature("docstring") createCheckpoint "Create a checkpoint recording the current state of the Context.
 This should be treated as an opaque block of binary data.  See loadCheckpoint() for more details.
 
@@ -175,7 +198,7 @@ Parameters:
   }
 
 
-  %pythoncode {
+  %pythoncode %{
     def getState(self,
                  copy,
                  getPositions=False,
@@ -185,48 +208,51 @@ Parameters:
                  getParameters=False,
                  enforcePeriodicBox=False,
                  groups=-1):
+        """Get a State object recording the current state information about one copy of the system.
+
+        Parameters
+        ----------
+        copy : int
+            the index of the copy for which to retrieve state information
+        getPositions : bool=False
+            whether to store particle positions in the State
+        getVelocities : bool=False
+            whether to store particle velocities in the State
+        getForces : bool=False
+            whether to store the forces acting on particles in the State
+        getEnergy : bool=False
+            whether to store potential and kinetic energy in the State
+        getParameter : bool=False
+            whether to store context parameters in the State
+        enforcePeriodicBox : bool=False
+            if false, the position of each particle will be whatever position
+            is stored in the Context, regardless of periodic boundary conditions.
+            If true, particle positions will be translated so the center of
+            every molecule lies in the same periodic box.
+        groups : set={0,1,2,...,31}
+            a set of indices for which force groups to include when computing
+            forces and energies. The default value includes all groups. groups
+            can also be passed as an unsigned integer interpreted as a bitmask,
+            in which case group i will be included if (groups&(1<<i)) != 0.
         """
-        getState(self,
-                 copy,
-                 getPositions = False,
-                 getVelocities = False,
-                 getForces = False,
-                 getEnergy = False,
-                 getParameters = False,
-                 enforcePeriodicBox = False,
-                 groups = -1)
-              -> State
-        
-        Get a State object recording the current state information about one copy of the system.
-        
-        Parameters:
-         - copy (int) the index of the copy for which to retrieve state information
-         - getPositions (bool=False) whether to store particle positions in the State
-         - getVelocities (bool=False) whether to store particle velocities in the State
-         - getForces (bool=False) whether to store the forces acting on particles in the State
-         - getEnergy (bool=False) whether to store potential and kinetic energy in the State
-         - getParameter (bool=False) whether to store context parameters in the State
-         - enforcePeriodicBox (bool=False) if false, the position of each particle will be whatever position is stored in the Context, regardless of periodic boundary conditions.  If true, particle positions will be translated so the center of every molecule lies in the same periodic box.
-         - groups (int=-1) a set of bit flags for which force groups to include when computing forces and energies.  Group i will be included if (groups&(1<<i)) != 0.  The default value includes all groups.
-        """
-        
-        if getPositions: getP=1
-        else: getP=0
-        if getVelocities: getV=1
-        else: getV=0
-        if getForces: getF=1
-        else: getF=0
-        if getEnergy: getE=1
-        else: getE=0
-        if getParameters: getPa=1
-        else: getPa=0
-        if enforcePeriodicBox: enforcePeriodic=1
-        else: enforcePeriodic=0
+        getP, getV, getF, getE, getPa, enforcePeriodic = map(bool,
+            (getPositions, getVelocities, getForces, getEnergy, getParameters,
+             enforcePeriodicBox))
+
+        try:
+            # is the input integer-like?
+            groups_mask = int(groups)
+        except TypeError:
+            if isinstance(groups, set):
+                groups_mask = functools.reduce(operator.or_,
+                        ((1<<x) & 0xffffffff for x in groups))
+            else:
+                raise TypeError('%s is neither an int nor set' % groups)
 
         (simTime, periodicBoxVectorsList, energy, coordList, velList,
-         forceList, paramMap) = \
-            self._getStateAsLists(copy, getP, getV, getF, getE, getPa, enforcePeriodic, groups)
-        
+          forceList, paramMap) = \
+             self._getStateAsLists(copy, getP, getV, getF, getE, getPa, enforcePeriodic, groups_mask)
+
         state = State(simTime=simTime,
                       energy=energy,
                       coordList=coordList,
@@ -235,11 +261,11 @@ Parameters:
                       periodicBoxVectorsList=periodicBoxVectorsList,
                       paramMap=paramMap)
         return state
-  }
+  %}
 }
 
 %extend OpenMM::NonbondedForce {
-  %pythoncode {
+  %pythoncode %{
     def addParticle_usingRVdw(self, charge, rVDW, epsilon):
         """Add particle using elemetrary charge.  Rvdw and epsilon,
            which is consistent with AMBER parameter file usage.
@@ -260,11 +286,11 @@ Parameters:
         """
         return self.addException(particle1, particle2,
                                  chargeProd, rMin/RMIN_PER_SIGMA, epsilon)
-  }
+  %}
 }
 
 %extend OpenMM::System {
-  %pythoncode {
+  %pythoncode %{
     def __getstate__(self):
         serializationString = XmlSerializer.serializeSystem(self)
         return serializationString
@@ -272,9 +298,15 @@ Parameters:
     def __setstate__(self, serializationString):
         system = XmlSerializer.deserializeSystem(serializationString)
         self.this = system.this
+    def __deepcopy__(self, memo):
+        return self.__copy__()
     def getForces(self):
         """Get the list of Forces in this System"""
         return [self.getForce(i) for i in range(self.getNumForces())]
+  %}
+  %newobject __copy__;
+  OpenMM::System* __copy__() {
+      return OpenMM::XmlSerializer::clone<OpenMM::System>(*self);
   }
 }
 
@@ -293,7 +325,7 @@ Parameters:
       ss << inputString;
       return OpenMM::XmlSerializer::deserialize<OpenMM::System>(ss);
   }
-  
+
   static std::string _serializeForce(const OpenMM::Force* object) {
       std::stringstream ss;
       OpenMM::XmlSerializer::serialize<OpenMM::Force>(object, "Force", ss);
@@ -306,7 +338,7 @@ Parameters:
       ss << inputString;
       return OpenMM::XmlSerializer::deserialize<OpenMM::Force>(ss);
   }
-  
+
   static std::string _serializeIntegrator(const OpenMM::Integrator* object) {
       std::stringstream ss;
       OpenMM::XmlSerializer::serialize<OpenMM::Integrator>(object, "Integrator", ss);
@@ -321,8 +353,8 @@ Parameters:
   }
 
   static std::string _serializeStateAsLists(
-                                const std::vector<Vec3>& pos, 
-                                const std::vector<Vec3>& vel, 
+                                const std::vector<Vec3>& pos,
+                                const std::vector<Vec3>& vel,
                                 const std::vector<Vec3>& forces,
                                 double kineticEnergy,
                                 double potentialEnergy,
@@ -335,7 +367,7 @@ Parameters:
     OpenMM::XmlSerializer::serialize<OpenMM::State>(&myState, "State", buffer);
     return buffer.str();
   }
-  
+
   static PyObject* _deserializeStringIntoLists(const std::string &stateAsString) {
     std::stringstream ss;
     ss << stateAsString;
@@ -345,7 +377,7 @@ Parameters:
     return obj;
   }
 
-  %pythoncode {
+  %pythoncode %{
     @staticmethod
     def _serializeState(pythonState):
       positions = []
@@ -363,7 +395,7 @@ Parameters:
       try:
         velocities = pythonState.getVelocities().value_in_unit(unit.nanometers/unit.picoseconds)
         types |= 2
-      except: 
+      except:
         pass
       try:
         forces = pythonState.getForces().value_in_unit(unit.kilojoules_per_mole/unit.nanometers)
@@ -384,14 +416,14 @@ Parameters:
       time = pythonState.getTime().value_in_unit(unit.picoseconds)
       boxVectors = pythonState.getPeriodicBoxVectors().value_in_unit(unit.nanometers)
       string = XmlSerializer._serializeStateAsLists(positions, velocities, forces, kineticEnergy, potentialEnergy, time, boxVectors, params, types)
-      return string  
+      return string
 
     @staticmethod
     def _deserializeState(pythonString):
-    
+
       (simTime, periodicBoxVectorsList, energy, coordList, velList,
        forceList, paramMap) = XmlSerializer._deserializeStringIntoLists(pythonString)
-      
+
       state = State(simTime=simTime,
                     energy=energy,
                     coordList=coordList,
@@ -417,7 +449,6 @@ Parameters:
     @staticmethod
     def deserialize(inputString):
       """Reconstruct an object that has been serialized as XML."""
-      # Look for the first tag to figure out what type of object it is.
       import re
       match = re.search("<([^?]\S*)", inputString)
       if match is None:
@@ -432,7 +463,7 @@ Parameters:
       if type == "State":
         return XmlSerializer._deserializeState(inputString)
       raise ValueError("Unsupported object type")
-  }
+  %}
 }
 
 %extend OpenMM::CustomIntegrator {
@@ -444,19 +475,7 @@ Parameters:
 }
 
 %extend OpenMM::Force {
-  %pythoncode {
-    def __copy__(self):
-        copy = self.__class__.__new__(self.__class__)
-        copy.__init__(self)
-        return copy
-
-    def __deepcopy__(self, memo):
-        return self.__copy__()
-  }
-}
-
-%extend OpenMM::Integrator {
-  %pythoncode {
+  %pythoncode %{
     def __getstate__(self):
         serializationString = XmlSerializer.serialize(self)
         return serializationString
@@ -464,5 +483,31 @@ Parameters:
     def __setstate__(self, serializationString):
         system = XmlSerializer.deserialize(serializationString)
         self.this = system.this
+
+    def __deepcopy__(self, memo):
+        return self.__copy__()
+  %}
+  %newobject __copy__;
+  OpenMM::Force* __copy__() {
+      return OpenMM::XmlSerializer::clone<OpenMM::Force>(*self);
+  }
+}
+
+%extend OpenMM::Integrator {
+  %pythoncode %{
+    def __getstate__(self):
+        serializationString = XmlSerializer.serialize(self)
+        return serializationString
+
+    def __setstate__(self, serializationString):
+        system = XmlSerializer.deserialize(serializationString)
+        self.this = system.this
+
+    def __deepcopy__(self, memo):
+        return self.__copy__()
+  %}
+  %newobject __copy__;
+  OpenMM::Integrator* __copy__() {
+      return OpenMM::XmlSerializer::clone<OpenMM::Integrator>(*self);
   }
 }

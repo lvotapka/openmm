@@ -6,7 +6,7 @@ Simbios, the NIH National Center for Physics-Based Simulation of
 Biological Structures at Stanford, funded under the NIH Roadmap for
 Medical Research, grant U54 GM072970. See https://simtk.org.
 
-Portions copyright (c) 2012-2013 Stanford University and the Authors.
+Portions copyright (c) 2012-2016 Stanford University and the Authors.
 Authors: Peter Eastman
 Contributors:
 
@@ -29,18 +29,19 @@ OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
 from __future__ import division
+from __future__ import absolute_import
 
 __author__ = "Peter Eastman"
 __version__ = "1.0"
 
 from simtk.openmm.app import Topology, PDBFile, ForceField
-from simtk.openmm.app.forcefield import HAngles, _createResidueSignature, _matchResidue, DrudeGenerator
+from simtk.openmm.app.forcefield import HAngles, AllBonds, CutoffNonPeriodic, _createResidueSignature, _matchResidue, DrudeGenerator
 from simtk.openmm.app.topology import Residue
 from simtk.openmm.vec3 import Vec3
 from simtk.openmm import System, Context, NonbondedForce, CustomNonbondedForce, HarmonicBondForce, HarmonicAngleForce, VerletIntegrator, LocalEnergyMinimizer
 from simtk.unit import nanometer, molar, elementary_charge, amu, gram, liter, degree, sqrt, acos, is_quantity, dot, norm
 import simtk.unit as unit
-import element as elem
+from . import element as elem
 import os
 import random
 import xml.etree.ElementTree as etree
@@ -62,9 +63,12 @@ class Modeller(object):
     def __init__(self, topology, positions):
         """Create a new Modeller object
 
-        Parameters:
-         - topology (Topology) the initial Topology of the model
-         - positions (list) the initial atomic positions
+        Parameters
+        ----------
+        topology : Topology
+            the initial Topology of the model
+        positions : list
+            the initial atomic positions
         """
         ## The Topology describing the structure of the system
         self.topology = topology
@@ -84,25 +88,29 @@ class Modeller(object):
     def add(self, addTopology, addPositions):
         """Add chains, residues, atoms, and bonds to the model.
 
-        Specify what to add by providing a new Topology object and the corresponding atomic positions.
-        All chains, residues, atoms, and bonds contained in the Topology are added to the model.
+        Specify what to add by providing a new Topology object and the
+        corresponding atomic positions. All chains, residues, atoms, and bonds
+        contained in the Topology are added to the model.
 
-        Parameters:
-         - addTopoology (Topology) a Topology whose contents should be added to the model
-         - addPositions (list) the positions of the atoms to add
+        Parameters
+        ----------
+        addTopology : Topology
+            a Topology whose contents should be added to the model
+        addPositions : list
+            the positions of the atoms to add
         """
         # Copy over the existing model.
 
         newTopology = Topology()
-        newTopology.setUnitCellDimensions(deepcopy(self.topology.getUnitCellDimensions()))
+        newTopology.setPeriodicBoxVectors(self.topology.getPeriodicBoxVectors())
         newAtoms = {}
         newPositions = []*nanometer
         for chain in self.topology.chains():
-            newChain = newTopology.addChain()
+            newChain = newTopology.addChain(chain.id)
             for residue in chain.residues():
-                newResidue = newTopology.addResidue(residue.name, newChain)
+                newResidue = newTopology.addResidue(residue.name, newChain, residue.id)
                 for atom in residue.atoms():
-                    newAtom = newTopology.addAtom(atom.name, atom.element, newResidue)
+                    newAtom = newTopology.addAtom(atom.name, atom.element, newResidue, atom.id)
                     newAtoms[atom] = newAtom
                     newPositions.append(deepcopy(self.positions[atom.index]))
         for bond in self.topology.bonds():
@@ -112,11 +120,11 @@ class Modeller(object):
 
         newAtoms = {}
         for chain in addTopology.chains():
-            newChain = newTopology.addChain()
+            newChain = newTopology.addChain(chain.id)
             for residue in chain.residues():
-                newResidue = newTopology.addResidue(residue.name, newChain)
+                newResidue = newTopology.addResidue(residue.name, newChain, residue.id)
                 for atom in residue.atoms():
-                    newAtom = newTopology.addAtom(atom.name, atom.element, newResidue)
+                    newAtom = newTopology.addAtom(atom.name, atom.element, newResidue, atom.id)
                     newAtoms[atom] = newAtom
                     newPositions.append(deepcopy(addPositions[atom.index]))
         for bond in addTopology.bonds():
@@ -136,11 +144,14 @@ class Modeller(object):
         You also can specify a bond (as a tuple of Atom objects) to delete just that bond without
         deleting the Atoms it connects.
 
-        Parameters:
-         - toDelete (list) a list of Atoms, Residues, Chains, and bonds (specified as tuples of Atoms) to delete
+        Parameters
+        ----------
+        toDelete : list
+            a list of Atoms, Residues, Chains, and bonds (specified as tuples of
+            Atoms) to delete
         """
         newTopology = Topology()
-        newTopology.setUnitCellDimensions(deepcopy(self.topology.getUnitCellDimensions()))
+        newTopology.setPeriodicBoxVectors(self.topology.getPeriodicBoxVectors())
         newAtoms = {}
         newPositions = []*nanometer
         deleteSet = set(toDelete)
@@ -153,12 +164,12 @@ class Modeller(object):
                         for atom in residue.atoms():
                             if atom not in deleteSet:
                                 if needNewChain:
-                                    newChain = newTopology.addChain()
+                                    newChain = newTopology.addChain(chain.id)
                                     needNewChain = False;
                                 if needNewResidue:
-                                    newResidue = newTopology.addResidue(residue.name, newChain)
+                                    newResidue = newTopology.addResidue(residue.name, newChain, residue.id)
                                     needNewResidue = False;
-                                newAtom = newTopology.addAtom(atom.name, atom.element, newResidue)
+                                newAtom = newTopology.addAtom(atom.name, atom.element, newResidue, atom.id)
                                 newAtoms[atom] = newAtom
                                 newPositions.append(deepcopy(self.positions[atom.index]))
         for bond in self.topology.bonds():
@@ -175,10 +186,14 @@ class Modeller(object):
     def convertWater(self, model='tip3p'):
         """Convert all water molecules to a different water model.
 
-        Parameters:
-         - model (string='tip3p') the water model to convert to.  Supported values are 'tip3p', 'spce', 'tip4pew', and 'tip5p'.
-        
-        @deprecated Use addExtraParticles() instead.  It performs the same function but in a more general way.
+        @deprecated Use addExtraParticles() instead.  It performs the same
+        function but in a more general way.
+
+        Parameters
+        ----------
+        model : string='tip3p'
+            the water model to convert to.  Supported values are 'tip3p',
+            'spce', 'tip4pew', and 'tip5p'.
         """
         if model in ('tip3p', 'spce'):
             sites = 3
@@ -189,13 +204,13 @@ class Modeller(object):
         else:
             raise ValueError('Unknown water model: %s' % model)
         newTopology = Topology()
-        newTopology.setUnitCellDimensions(deepcopy(self.topology.getUnitCellDimensions()))
+        newTopology.setPeriodicBoxVectors(self.topology.getPeriodicBoxVectors())
         newAtoms = {}
         newPositions = []*nanometer
         for chain in self.topology.chains():
-            newChain = newTopology.addChain()
+            newChain = newTopology.addChain(chain.id)
             for residue in chain.residues():
-                newResidue = newTopology.addResidue(residue.name, newChain)
+                newResidue = newTopology.addResidue(residue.name, newChain, residue.id)
                 if residue.name == "HOH":
                     # Copy the oxygen and hydrogens
                     oatom = [atom for atom in residue.atoms() if atom.element == elem.oxygen]
@@ -231,7 +246,7 @@ class Modeller(object):
                 else:
                     # Just copy the residue over.
                     for atom in residue.atoms():
-                        newAtom = newTopology.addAtom(atom.name, atom.element, newResidue)
+                        newAtom = newTopology.addAtom(atom.name, atom.element, newResidue, atom.id)
                         newAtoms[atom] = newAtom
                         newPositions.append(deepcopy(self.positions[atom.index]))
         for bond in self.topology.bonds():
@@ -240,58 +255,55 @@ class Modeller(object):
         self.topology = newTopology
         self.positions = newPositions
 
-    def addSolvent(self, forcefield, model='tip3p', boxSize=None, padding=None, positiveIon='Na+', negativeIon='Cl-', ionicStrength=0*molar):
+    def addSolvent(self, forcefield, model='tip3p', boxSize=None, boxVectors=None, padding=None, numAdded=None, positiveIon='Na+', negativeIon='Cl-', ionicStrength=0*molar, neutralize=True):
         """Add solvent (both water and ions) to the model to fill a rectangular box.
 
         The algorithm works as follows:
+
         1. Water molecules are added to fill the box.
         2. Water molecules are removed if their distance to any solute atom is less than the sum of their van der Waals radii.
-        3. If the solute is charged, enough positive or negative ions are added to neutralize it.  Each ion is added by
+        3. If the solute is charged and neutralize=True, enough positive or negative ions are added to neutralize it.  Each ion is added by
            randomly selecting a water molecule and replacing it with the ion.
-        4. Ion pairs are added to give the requested total ionic strength.
+        4. Ion pairs are added to give the requested total ionic strength.  Note that only monovalent ions are currently supported.
 
-        The box size can be specified in three ways.  First, you can explicitly give a box size to use.  Alternatively, you can
-        give a padding distance.  The largest dimension of the solute (along the x, y, or z axis) is determined, and a cubic
-        box of size (largest dimension)+2*padding is used.  Finally, if neither a box size nor a padding distance is specified,
-        the existing Topology's unit cell dimensions are used.
+        The box size can be specified in any of several ways:
 
-        Parameters:
-         - forcefield (ForceField) the ForceField to use for determining van der Waals radii and atomic charges
-         - model (string='tip3p') the water model to use.  Supported values are 'tip3p', 'spce', 'tip4pew', and 'tip5p'.
-         - boxSize (Vec3=None) the size of the box to fill with water
-         - padding (distance=None) the padding distance to use
-         - positiveIon (string='Na+') the type of positive ion to add.  Allowed values are 'Cs+', 'K+', 'Li+', 'Na+', and 'Rb+'
-         - negativeIon (string='Cl-') the type of negative ion to add.  Allowed values are 'Cl-', 'Br-', 'F-', and 'I-'. Be aware
-           that not all force fields support all ion types.
-         - ionicStrength (concentration=0*molar) the total concentration of ions (both positive and negative) to add.  This
-           does not include ions that are added to neutralize the system.
+        1. You can explicitly give the vectors defining the periodic box to use.
+        2. Alternatively, for a rectangular box you can simply give the dimensions of the unit cell.
+        3. You can give a padding distance.  The largest dimension of the solute (along the x, y, or z axis) is determined, and a cubic
+           box of size (largest dimension)+2*padding is used.
+        4. You can specify the total number of molecules (both waters and ions) to add.  A cubic box is then created whose size is
+           just large enough hold the specified amount of solvent.
+        5. Finally, if none of the above options is specified, the existing Topology's box vectors are used.
+
+        Parameters
+        ----------
+        forcefield : ForceField
+            the ForceField to use for determining van der Waals radii and atomic charges
+        model : str='tip3p'
+            the water model to use.  Supported values are 'tip3p', 'spce', 'tip4pew', and 'tip5p'.
+        boxSize : Vec3=None
+            the size of the box to fill with water
+        boxVectors : tuple of Vec3=None
+            the vectors defining the periodic box to fill with water
+        padding : distance=None
+            the padding distance to use
+        numAdded : int=None
+            the total number of molecules (waters and ions) to add
+        positiveIon : string='Na+'
+            the type of positive ion to add.  Allowed values are 'Cs+', 'K+', 'Li+', 'Na+', and 'Rb+'
+        negativeIon : string='Cl-'
+            the type of negative ion to add.  Allowed values are 'Cl-', 'Br-', 'F-', and 'I-'. Be aware
+            that not all force fields support all ion types.
+        ionicStrength : concentration=0*molar
+            the total concentration of ions (both positive and negative) to add.  This
+            does not include ions that are added to neutralize the system.
+            Note that only monovalent ions are currently supported.
+        neutralize : bool=True
+            whether to add ions to neutralize the system
         """
-        # Pick a unit cell size.
-
-        if boxSize is not None:
-            if is_quantity(boxSize):
-                boxSize = boxSize.value_in_unit(nanometer)
-            box = Vec3(boxSize[0], boxSize[1], boxSize[2])*nanometer
-        elif padding is not None:
-            maxSize = max(max((pos[i] for pos in self.positions))-min((pos[i] for pos in self.positions)) for i in range(3))
-            box = (maxSize+2*padding)*Vec3(1, 1, 1)
-        else:
-            box = self.topology.getUnitCellDimensions()
-            if box is None:
-                raise ValueError('Neither the box size nor padding was specified, and the Topology does not define unit cell dimensions')
-        box = box.value_in_unit(nanometer)
-        invBox = Vec3(1.0/box[0], 1.0/box[1], 1.0/box[2])
-
-        # Identify the ion types.
-
-        posIonElements = {'Cs+':elem.cesium, 'K+':elem.potassium, 'Li+':elem.lithium, 'Na+':elem.sodium, 'Rb+':elem.rubidium}
-        negIonElements = {'Cl-':elem.chlorine, 'Br-':elem.bromine, 'F-':elem.fluorine, 'I-':elem.iodine}
-        if positiveIon not in posIonElements:
-            raise ValueError('Illegal value for positive ion: %s' % positiveIon)
-        if negativeIon not in negIonElements:
-            raise ValueError('Illegal value for negative ion: %s' % negativeIon)
-        positiveElement = posIonElements[positiveIon]
-        negativeElement = negIonElements[negativeIon]
+        if len([x for x in (boxSize, boxVectors, padding, numAdded) if x is not None]) > 1:
+            raise ValueError('At most one of the following arguments may be specified: boxSize, boxVectors, padding, numAdded')
 
         # Load the pre-equilibrated water box.
 
@@ -312,6 +324,49 @@ class Modeller(object):
         pdbResidues = list(pdbTopology.residues())
         pdbBoxSize = pdbTopology.getUnitCellDimensions().value_in_unit(nanometer)
 
+        # Pick a unit cell size.
+
+        if numAdded is not None:
+            # Select a padding distance which is guaranteed to give more than the specified number of molecules.
+
+            padding = 1.1*(numAdded/((len(pdbResidues)/pdbBoxSize[0]**3)*8))**(1.0/3.0)
+            if padding < 0.5:
+                padding = 0.5 # Ensure we have enough when adding very small numbers of molecules
+        if boxVectors is not None:
+            if is_quantity(boxVectors[0]):
+                boxVectors = (boxVectors[0].value_in_unit(nanometer), boxVectors[1].value_in_unit(nanometer), boxVectors[2].value_in_unit(nanometer))
+            box = Vec3(boxVectors[0][0], boxVectors[1][1], boxVectors[2][2])
+            vectors = boxVectors
+        elif boxSize is not None:
+            if is_quantity(boxSize):
+                boxSize = boxSize.value_in_unit(nanometer)
+            box = Vec3(boxSize[0], boxSize[1], boxSize[2])
+            vectors = (Vec3(boxSize[0], 0, 0), Vec3(0, boxSize[1], 0), Vec3(0, 0, boxSize[2]))
+        elif padding is not None:
+            if is_quantity(padding):
+                padding = padding.value_in_unit(nanometer)
+            maxSize = max(max((pos[i] for pos in self.positions))-min((pos[i] for pos in self.positions)) for i in range(3))
+            maxSize = maxSize.value_in_unit(nanometer)
+            box = (maxSize+2*padding)*Vec3(1, 1, 1)
+            vectors = (Vec3(maxSize+2*padding, 0, 0), Vec3(0, maxSize+2*padding, 0), Vec3(0, 0, maxSize+2*padding))
+        else:
+            box = self.topology.getUnitCellDimensions().value_in_unit(nanometer)
+            vectors = self.topology.getPeriodicBoxVectors().value_in_unit(nanometer)
+            if box is None:
+                raise ValueError('Neither the box size, box vectors, nor padding was specified, and the Topology does not define unit cell dimensions')
+        invBox = Vec3(1.0/box[0], 1.0/box[1], 1.0/box[2])
+
+        # Identify the ion types.
+
+        posIonElements = {'Cs+':elem.cesium, 'K+':elem.potassium, 'Li+':elem.lithium, 'Na+':elem.sodium, 'Rb+':elem.rubidium}
+        negIonElements = {'Cl-':elem.chlorine, 'Br-':elem.bromine, 'F-':elem.fluorine, 'I-':elem.iodine}
+        if positiveIon not in posIonElements:
+            raise ValueError('Illegal value for positive ion: %s' % positiveIon)
+        if negativeIon not in negIonElements:
+            raise ValueError('Illegal value for negative ion: %s' % negativeIon)
+        positiveElement = posIonElements[positiveIon]
+        negativeElement = negIonElements[negativeIon]
+
         # Have the ForceField build a System for the solute from which we can determine van der Waals radii.
 
         system = forcefield.createSystem(self.topology)
@@ -331,15 +386,15 @@ class Modeller(object):
         # Copy the solute over.
 
         newTopology = Topology()
-        newTopology.setUnitCellDimensions(box)
+        newTopology.setPeriodicBoxVectors(vectors*nanometer)
         newAtoms = {}
         newPositions = []*nanometer
         for chain in self.topology.chains():
-            newChain = newTopology.addChain()
+            newChain = newTopology.addChain(chain.id)
             for residue in chain.residues():
-                newResidue = newTopology.addResidue(residue.name, newChain)
+                newResidue = newTopology.addResidue(residue.name, newChain, residue.id)
                 for atom in residue.atoms():
-                    newAtom = newTopology.addAtom(atom.name, atom.element, newResidue)
+                    newAtom = newTopology.addAtom(atom.name, atom.element, newResidue, atom.id)
                     newAtoms[atom] = newAtom
                     newPositions.append(deepcopy(self.positions[atom.index]))
         for bond in self.topology.bonds():
@@ -378,7 +433,9 @@ class Modeller(object):
 
         def periodicDistance(pos1, pos2):
             delta = pos1-pos2
-            delta = [delta[i]-floor(delta[i]*invBox[i]+0.5)*box[i] for i in range(3)]
+            delta -= vectors[2]*floor(delta[2]*invBox[2]+0.5)
+            delta -= vectors[1]*floor(delta[1]*invBox[1]+0.5)
+            delta -= vectors[0]*floor(delta[0]*invBox[0]+0.5)
             return norm(delta)
 
         # Find the list of water molecules to add.
@@ -410,33 +467,45 @@ class Modeller(object):
 
                                 addedWaters.append((residue.index, atomPos))
 
-        # There could be clashes between water molecules at the box edges.  Find ones to remove.
+        if numAdded is not None:
+            # We added many more waters than we actually want.  Sort them based on distance to the nearest box edge and
+            # only keep the ones in the middle.
 
-        upperCutoff = center+box/2-Vec3(waterCutoff, waterCutoff, waterCutoff)
-        lowerCutoff = center-box/2+Vec3(waterCutoff, waterCutoff, waterCutoff)
-        lowerSkinPositions = [pos for index, pos in addedWaters if pos[0] < lowerCutoff[0] or pos[1] < lowerCutoff[1] or pos[2] < lowerCutoff[2]]
-        filteredWaters = []
-        cells = {}
-        for i in range(len(lowerSkinPositions)):
-            cell = tuple((int(floor(lowerSkinPositions[i][j]/cellSize[j]))%numCells[j] for j in range(3)))
-            if cell in cells:
-                cells[cell].append(i)
-            else:
-                cells[cell] = [i]
-        for entry in addedWaters:
-            pos = entry[1]
-            if pos[0] < upperCutoff[0] and pos[1] < upperCutoff[1] and pos[2] < upperCutoff[2]:
-                filteredWaters.append(entry)
-            else:
-                if not any((periodicDistance(lowerSkinPositions[i], pos) < waterCutoff and norm(lowerSkinPositions[i]-pos) > waterCutoff for i in neighbors(pos))):
+            lowerBound = center-box/2
+            upperBound = center+box/2
+            distToEdge = (min(min(pos-lowerBound), min(upperBound-pos)) for index, pos in addedWaters)
+            sortedIndex = [i[0] for i in sorted(enumerate(distToEdge), key=lambda x: -x[1])]
+            addedWaters = [addedWaters[i] for i in sortedIndex[:numAdded]]
+
+            # Compute a new periodic box size.
+
+            maxSize = max(max((pos[i] for index, pos in addedWaters))-min((pos[i] for index, pos in addedWaters)) for i in range(3))
+            newTopology.setUnitCellDimensions(Vec3(maxSize, maxSize, maxSize))
+        else:
+            # There could be clashes between water molecules at the box edges.  Find ones to remove.
+
+            upperCutoff = center+box/2-Vec3(waterCutoff, waterCutoff, waterCutoff)
+            lowerCutoff = center-box/2+Vec3(waterCutoff, waterCutoff, waterCutoff)
+            lowerSkinPositions = [pos for index, pos in addedWaters if pos[0] < lowerCutoff[0] or pos[1] < lowerCutoff[1] or pos[2] < lowerCutoff[2]]
+            filteredWaters = []
+            cells = {}
+            for i in range(len(lowerSkinPositions)):
+                cell = tuple((int(floor(lowerSkinPositions[i][j]/cellSize[j]))%numCells[j] for j in range(3)))
+                if cell in cells:
+                    cells[cell].append(i)
+                else:
+                    cells[cell] = [i]
+            for entry in addedWaters:
+                pos = entry[1]
+                if pos[0] < upperCutoff[0] and pos[1] < upperCutoff[1] and pos[2] < upperCutoff[2]:
                     filteredWaters.append(entry)
-        addedWaters = filteredWaters
+                else:
+                    if not any((periodicDistance(lowerSkinPositions[i], pos) < waterCutoff and norm(lowerSkinPositions[i]-pos) > waterCutoff for i in neighbors(pos))):
+                        filteredWaters.append(entry)
+            addedWaters = filteredWaters
 
         # Add ions to neutralize the system.
 
-        totalCharge = int(floor(0.5+sum((nonbonded.getParticleParameters(i)[0].value_in_unit(elementary_charge) for i in range(system.getNumParticles())))))
-        if abs(totalCharge) > len(addedWaters):
-            raise Exception('Cannot neutralize the system because the charge is greater than the number of available positions for ions')
         def addIon(element):
             # Replace a water by an ion.
             index = random.randint(0, len(addedWaters)-1)
@@ -444,13 +513,17 @@ class Modeller(object):
             newTopology.addAtom(element.symbol, element, newResidue)
             newPositions.append(addedWaters[index][1]*nanometer)
             del addedWaters[index]
-        for i in range(abs(totalCharge)):
-            addIon(positiveElement if totalCharge < 0 else negativeElement)
+        if neutralize:
+            totalCharge = int(floor(0.5+sum((nonbonded.getParticleParameters(i)[0].value_in_unit(elementary_charge) for i in range(system.getNumParticles())))))
+            if abs(totalCharge) > len(addedWaters):
+                raise Exception('Cannot neutralize the system because the charge is greater than the number of available positions for ions')
+            for i in range(abs(totalCharge)):
+                addIon(positiveElement if totalCharge < 0 else negativeElement)
 
         # Add ions based on the desired ionic strength.
 
         numIons = len(addedWaters)*ionicStrength/(55.4*molar) # Pure water is about 55.4 molar (depending on temperature)
-        numPairs = int(floor(numIons/2+0.5))
+        numPairs = int(floor(numIons+0.5))
         for i in range(numPairs):
             addIon(positiveElement)
         for i in range(numPairs):
@@ -472,7 +545,6 @@ class Modeller(object):
                     for atom2 in molAtoms:
                         if atom2.element == elem.hydrogen:
                             newTopology.addBond(atom1, atom2)
-        newTopology.setUnitCellDimensions(deepcopy(box)*nanometer)
         self.topology = newTopology
         self.positions = newPositions
 
@@ -543,6 +615,7 @@ class Modeller(object):
             HID: Neutral form with a hydrogen on the ND1 atom
             HIE: Neutral form with a hydrogen on the NE2 atom
             HIP: Positively charged form with hydrogens on both ND1 and NE2
+            HIN: Negatively charged form without a hydrogen on either ND1 or NE2
 
         Lysine:
             LYN: Neutral form with two hydrogens on the zeta nitrogen
@@ -554,23 +627,41 @@ class Modeller(object):
         2. Any Cysteine that participates in a disulfide bond uses the CYX variant regardless of pH.
         3. For a neutral Histidine residue, the HID or HIE variant is selected based on which one forms a better hydrogen bond.
 
-        You can override these rules by explicitly specifying a variant for any residue.  Also keep in mind that this
-        function will only add hydrogens.  It will never remove ones that are already present in the model, regardless
-        of the specified pH.
+        You can override these rules by explicitly specifying a variant for any residue.  To do that, provide a list for the
+        'variants' parameter, and set the corresponding element to the name of the variant to use.
+
+        A special case is when the model already contains a hydrogen that should not be present in the desired variant.
+        If you explicitly specify a variant using the 'variants' parameter, the residue will be modified to match the
+        desired variant, removing hydrogens if necessary.  On the other hand, for residues whose variant is selected
+        automatically, this function will only add hydrogens.  It will never remove ones that are already present in the
+        model, regardless of the specified pH.
 
         Definitions for standard amino acids and nucleotides are built in.  You can call loadHydrogenDefinitions() to load
         additional definitions for other residue types.
 
-        Parameters:
-         - forcefield (ForceField=None) the ForceField to use for determining the positions of hydrogens.  If this is None,
-           positions will be picked which are generally reasonable but not optimized for any particular ForceField.
-         - pH (float=7.0) the pH based on which to select variants
-         - variants (list=None) an optional list of variants to use.  If this is specified, its length must equal the number
-           of residues in the model.  variants[i] is the name of the variant to use for residue i (indexed starting at 0).
-           If an element is None, the standard rules will be followed to select a variant for that residue.
-         - platform (Platform=None) the Platform to use when computing the hydrogen atom positions.  If this is None,
-           the default Platform will be used.
-        Returns: a list of what variant was actually selected for each residue, in the same format as the variants parameter
+        Parameters
+        ----------
+        forcefield : ForceField=None
+            the ForceField to use for determining the positions of hydrogens.
+            If this is None, positions will be picked which are generally
+            reasonable but not optimized for any particular ForceField.
+        pH : float=7.0
+            the pH based on which to select variants
+        variants : list=None
+            an optional list of variants to use.  If this is specified, its
+            length must equal the number of residues in the model.  variants[i]
+            is the name of the variant to use for residue i (indexed starting at
+            0). If an element is None, the standard rules will be followed to
+            select a variant for that residue.
+        platform : Platform=None
+            the Platform to use when computing the hydrogen atom positions.  If
+            this is None, the default Platform will be used.
+
+        Returns
+        -------
+        list
+             a list of what variant was actually selected for each residue,
+             in the same format as the variants parameter
         """
         # Check the list of variants.
 
@@ -610,15 +701,15 @@ class Modeller(object):
         # Loop over residues.
 
         newTopology = Topology()
-        newTopology.setUnitCellDimensions(deepcopy(self.topology.getUnitCellDimensions()))
+        newTopology.setPeriodicBoxVectors(self.topology.getPeriodicBoxVectors())
         newAtoms = {}
         newPositions = []*nanometer
         newIndices = []
         acceptors = [atom for atom in self.topology.atoms() if atom.element in (elem.oxygen, elem.nitrogen)]
         for chain in self.topology.chains():
-            newChain = newTopology.addChain()
+            newChain = newTopology.addChain(chain.id)
             for residue in chain.residues():
-                newResidue = newTopology.addResidue(residue.name, newChain)
+                newResidue = newTopology.addResidue(residue.name, newChain, residue.id)
                 isNTerminal = (residue == chain._residues[0])
                 isCTerminal = (residue == chain._residues[-1])
                 if residue.name in Modeller._residueHydrogens:
@@ -687,6 +778,7 @@ class Modeller(object):
                     if variant is not None and variant not in spec.variants:
                         raise ValueError('Illegal variant for %s residue: %s' % (residue.name, variant))
                     actualVariants[residue.index] = variant
+                    removeExtraHydrogens = (variants[residue.index] is not None)
 
                     # Make a list of hydrogens that should be present in the residue.
 
@@ -699,6 +791,11 @@ class Modeller(object):
                     # Loop over atoms in the residue, adding them to the new topology along with required hydrogens.
 
                     for parent in residue.atoms():
+                        # Check whether this is a hydrogen that should be removed.
+
+                        if removeExtraHydrogens and parent.element == elem.hydrogen and not any(parent.name == h.name for h in hydrogens):
+                            continue
+
                         # Add the atom.
 
                         newAtom = newTopology.addAtom(parent.name, parent.element, newResidue)
@@ -759,8 +856,8 @@ class Modeller(object):
 
         if forcefield is not None:
             # Use the ForceField the user specified.
-            
-            system = forcefield.createSystem(newTopology, rigidWater=False)
+
+            system = forcefield.createSystem(newTopology, rigidWater=False, nonbondedMethod=CutoffNonPeriodic)
             atoms = list(newTopology.atoms())
             for i in range(system.getNumParticles()):
                 if atoms[i].element != elem.hydrogen:
@@ -769,9 +866,11 @@ class Modeller(object):
         else:
             # Create a System that restrains the distance of each hydrogen from its parent atom
             # and causes hydrogens to spread out evenly.
-            
+
             system = System()
-            nonbonded = CustomNonbondedForce('1/((r/0.1)^4+1)')
+            nonbonded = CustomNonbondedForce('100/((r/0.1)^4+1)')
+            nonbonded.setNonbondedMethod(CustomNonbondedForce.CutoffNonPeriodic);
+            nonbonded.setCutoffDistance(1*nanometer)
             bonds = HarmonicBondForce()
             angles = HarmonicAngleForce()
             system.addForce(nonbonded)
@@ -793,7 +892,7 @@ class Modeller(object):
             for residue in newTopology.residues():
                 if residue.name == 'HOH':
                     # Add an angle term to make the water geometry correct.
-                    
+
                     atoms = list(residue.atoms())
                     oindex = [i for i in range(len(atoms)) if atoms[i].element == elem.oxygen]
                     if len(atoms) == 3 and len(oindex) == 1:
@@ -801,12 +900,12 @@ class Modeller(object):
                         angles.addAngle(atoms[hindex[0]].index, atoms[oindex[0]].index, atoms[hindex[1]].index, 1.824, 836.8)
                 else:
                     # Add angle terms for any hydroxyls.
-                    
+
                     for atom in residue.atoms():
                         index = atom.index
                         if atom.element == elem.oxygen and len(bondedTo[index]) == 2 and elem.hydrogen in (a.element for a in bondedTo[index]):
                             angles.addAngle(bondedTo[index][0].index, index, bondedTo[index][1].index, 1.894, 460.24)
-            
+
         if platform is None:
             context = Context(system, VerletIntegrator(0.0))
         else:
@@ -819,23 +918,29 @@ class Modeller(object):
         return actualVariants
 
     def addExtraParticles(self, forcefield):
-        """Add missing extra particles to the model that are required by a force field.
+        """Add missing extra particles to the model that are required by a force
+        field.
 
-        Some force fields use "extra particles" that do not represent actual atoms, but still need to be included in
-        the System.  Examples include lone pairs, Drude particles, and the virtual sites used in some water models
-        to adjust the charge distribution.  Extra particles can be recognized by the fact that their element is None.
+        Some force fields use "extra particles" that do not represent
+        actual atoms, but still need to be included in the System.  Examples
+        include lone pairs, Drude particles, and the virtual sites used in some
+        water models to adjust the charge distribution.  Extra particles can be
+        recognized by the fact that their element is None.
 
-        This method is primarily used to add extra particles, but it can also remove them.  It tries to match every
-        residue in the Topology to a template in the force field.  If there is no match, it will both add and remove
-        extra particles as necessary to make it match.
+        This method is primarily used to add extra particles, but it can also
+        remove them.  It tries to match every residue in the Topology to a
+        template in the force field.  If there is no match, it will both add
+        and remove extra particles as necessary to make it match.
 
-        Parameters:
-         - forcefield (ForceField) the ForceField defining what extra particles should be present
+        Parameters
+        ----------
+        forcefield : ForceField
+            the ForceField defining what extra particles should be present
         """
         # Create copies of all residue templates that have had all extra points removed.
 
         templatesNoEP = {}
-        for resName, template in forcefield._templates.iteritems():
+        for resName, template  in forcefield._templates.items():
             if any(atom.element is None for atom in template.atoms):
                 index = 0
                 newIndex = {}
@@ -883,13 +988,14 @@ class Modeller(object):
         # Create the new Topology.
 
         newTopology = Topology()
-        newTopology.setUnitCellDimensions(deepcopy(self.topology.getUnitCellDimensions()))
+        newTopology.setPeriodicBoxVectors(self.topology.getPeriodicBoxVectors())
         newAtoms = {}
         newPositions = []*nanometer
+        missingPositions = set()
         for chain in self.topology.chains():
-            newChain = newTopology.addChain()
+            newChain = newTopology.addChain(chain.id)
             for residue in chain.residues():
-                newResidue = newTopology.addResidue(residue.name, newChain)
+                newResidue = newTopology.addResidue(residue.name, newChain, residue.id)
 
                 # Look for a matching template.
 
@@ -911,7 +1017,7 @@ class Modeller(object):
                     # extra points.
 
                     template = None
-                    residueNoEP = Residue(residue.name, residue.index, residue.chain)
+                    residueNoEP = Residue(residue.name, residue.index, residue.chain, residue.id)
                     residueNoEP._atoms = [atom for atom in residue.atoms() if atom.element is not None]
                     if signature in forcefield._templateSignatures:
                         for t in forcefield._templateSignatures[signature]:
@@ -943,9 +1049,10 @@ class Modeller(object):
                     for index, atom in enumerate(template.atoms):
                         if atom in matchingAtoms:
                             templateAtomPositions[index] = self.positions[matchingAtoms[atom].index].value_in_unit(nanometer)
+                    newExtraPoints = {}
                     for index, atom in enumerate(template.atoms):
                         if atom.element is None:
-                            newTopology.addAtom(atom.name, None, newResidue)
+                            newExtraPoints[atom] = newTopology.addAtom(atom.name, None, newResidue)
                             position = None
                             for site in template.virtualSites:
                                 if site.index == index:
@@ -960,6 +1067,15 @@ class Modeller(object):
                                         v2 = templateAtomPositions[site.atoms[2]] - templateAtomPositions[site.atoms[0]]
                                         cross = Vec3(v1[1]*v2[2]-v1[2]*v2[1], v1[2]*v2[0]-v1[0]*v2[2], v1[0]*v2[1]-v1[1]*v2[0])
                                         position = templateAtomPositions[site.atoms[0]] + site.weights[0]*v1 + site.weights[1]*v2 + site.weights[2]*cross
+                                    elif site.type == 'localCoords':
+                                        origin = templateAtomPositions[site.atoms[0]]*site.originWeights[0] + templateAtomPositions[site.atoms[1]]*site.originWeights[1] + templateAtomPositions[site.atoms[2]]*site.originWeights[2];
+                                        xdir = templateAtomPositions[site.atoms[0]]*site.xWeights[0] + templateAtomPositions[site.atoms[1]]*site.xWeights[1] + templateAtomPositions[site.atoms[2]]*site.xWeights[2];
+                                        ydir = templateAtomPositions[site.atoms[0]]*site.yWeights[0] + templateAtomPositions[site.atoms[1]]*site.yWeights[1] + templateAtomPositions[site.atoms[2]]*site.yWeights[2];
+                                        zdir = Vec3(xdir[1]*ydir[2]-xdir[2]*ydir[1], xdir[2]*ydir[0]-xdir[0]*ydir[2], xdir[0]*ydir[1]-xdir[1]*ydir[0])
+                                        xdir /= norm(xdir);
+                                        zdir /= norm(zdir);
+                                        ydir = Vec3(zdir[1]*xdir[2]-zdir[2]*xdir[1], zdir[2]*xdir[0]-zdir[0]*xdir[2], zdir[0]*xdir[1]-zdir[1]*xdir[0])
+                                        position = origin + xdir*site.localPos[0] + ydir*site.localPos[1] + zdir*site.localPos[2];
                             if position is None and atom.type in drudeTypeMap:
                                 # This is a Drude particle.  Put it on top of its parent atom.
 
@@ -967,14 +1083,61 @@ class Modeller(object):
                                     if atom2.type in drudeTypeMap[atom.type]:
                                         position = deepcopy(pos)
                             if position is None:
-                                # We couldn't figure out the correct position.  As a wild guess, just put it at the center of the residue
-                                # and hope that energy minimization will fix it.
+                                # We couldn't figure out the correct position.  Put it at a random position near the center of the residue,
+                                # and we'll try to fix it later based on bonds.
 
                                 knownPositions = [x for x in templateAtomPositions if x is not None]
-                                position = unit.sum(knownPositions)/len(knownPositions)
+                                position = Vec3(random.gauss(0, 1), random.gauss(0, 1), random.gauss(0, 1))+(unit.sum(knownPositions)/len(knownPositions))
+                                missingPositions.add(len(newPositions))
                             newPositions.append(position*nanometer)
+
+                    # Add bonds involving the extra points.
+
+                    for atom1, atom2 in template.bonds:
+                        atom1 = template.atoms[atom1]
+                        atom2 = template.atoms[atom2]
+                        if atom1 in newExtraPoints or atom2 in newExtraPoints:
+                            if atom1 in newExtraPoints:
+                                a1 = newExtraPoints[atom1]
+                            else:
+                                a1 = newAtoms[matchingAtoms[atom1]]
+                            if atom2 in newExtraPoints:
+                                a2 = newExtraPoints[atom2]
+                            else:
+                                a2 = newAtoms[matchingAtoms[atom2]]
+                            newTopology.addBond(a1, a2)
+
         for bond in self.topology.bonds():
             if bond[0] in newAtoms and bond[1] in newAtoms:
                 newTopology.addBond(newAtoms[bond[0]], newAtoms[bond[1]])
+
+        if len(missingPositions) > 0:
+            # There were particles whose position we couldn't identify before, since they were neither virtual sites nor Drude particles.
+            # Try to figure them out based on bonds.  First, use the ForceField to create a list of every bond involving one of them.
+
+            system = forcefield.createSystem(newTopology, constraints=AllBonds)
+            bonds = []
+            for i in range(system.getNumConstraints()):
+                bond = system.getConstraintParameters(i)
+                if bond[0] in missingPositions or bond[1] in missingPositions:
+                    bonds.append(bond)
+
+            # Now run a few iterations of SHAKE to try to select reasonable positions.
+
+            for iteration in range(15):
+                for atom1, atom2, distance in bonds:
+                    if atom1 in missingPositions:
+                        if atom2 in missingPositions:
+                            weights = (0.5, 0.5)
+                        else:
+                            weights = (1.0, 0.0)
+                    else:
+                        weights = (0.0, 1.0)
+                    delta = newPositions[atom2]-newPositions[atom1]
+                    length = norm(delta)
+                    delta *= (distance-length)/length
+                    newPositions[atom1] -= weights[0]*delta
+                    newPositions[atom2] += weights[1]*delta
+
         self.topology = newTopology
         self.positions = newPositions

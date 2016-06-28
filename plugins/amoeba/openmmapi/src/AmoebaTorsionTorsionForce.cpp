@@ -6,7 +6,7 @@
  * Biological Structures at Stanford, funded under the NIH Roadmap for        *
  * Medical Research, grant U54 GM072970. See https://simtk.org.               *
  *                                                                            *
- * Portions copyright (c) 2008-2014 Stanford University and the Authors.      *
+ * Portions copyright (c) 2008-2016 Stanford University and the Authors.      *
  * Authors:                                                                   *
  * Contributors:                                                              *
  *                                                                            *
@@ -38,7 +38,7 @@
 using namespace OpenMM;
 using namespace std;
 
-AmoebaTorsionTorsionForce::AmoebaTorsionTorsionForce() {
+AmoebaTorsionTorsionForce::AmoebaTorsionTorsionForce() : usePeriodic(false) {
 }
 
 int AmoebaTorsionTorsionForce::addTorsionTorsion(int particle1, int particle2, int particle3,
@@ -70,13 +70,13 @@ void AmoebaTorsionTorsionForce::setTorsionTorsionParameters(int index, int parti
     torsionTorsions[index].gridIndex              = gridIndex;
 }
 
-const TorsionTorsionGrid& AmoebaTorsionTorsionForce::getTorsionTorsionGrid(int index ) const {
+const TorsionTorsionGrid& AmoebaTorsionTorsionForce::getTorsionTorsionGrid(int index) const {
    return torsionTorsionGrids[index].getTorsionTorsionGrid();
 }
 
-void AmoebaTorsionTorsionForce::setTorsionTorsionGrid(int index, const TorsionTorsionGrid& grid ) {
-   if( index >= static_cast<int>(torsionTorsionGrids.size()) ){
-      torsionTorsionGrids.resize( index + 1);
+void AmoebaTorsionTorsionForce::setTorsionTorsionGrid(int index, const TorsionTorsionGrid& grid) {
+   if (index >= static_cast<int>(torsionTorsionGrids.size())) {
+      torsionTorsionGrids.resize(index + 1);
    }
    torsionTorsionGrids[index] = grid;
 }
@@ -182,4 +182,12 @@ AmoebaTorsionTorsionForce::TorsionTorsionGridInfo::TorsionTorsionGridInfo(const 
                 _grid[i][j].push_back(d12[i+xsize*j]);
             }
     }
+}
+
+void AmoebaTorsionTorsionForce::setUsesPeriodicBoundaryConditions(bool periodic) {
+    usePeriodic = periodic;
+}
+
+bool AmoebaTorsionTorsionForce::usesPeriodicBoundaryConditions() const {
+    return usePeriodic;
 }

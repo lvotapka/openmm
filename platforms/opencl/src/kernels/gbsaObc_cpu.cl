@@ -20,8 +20,9 @@ __kernel void computeBornSum(
 #endif
         __global const real4* restrict posq, __global const float2* restrict global_params,
 #ifdef USE_CUTOFF
-        __global const int* restrict tiles, __global const unsigned int* restrict interactionCount, real4 periodicBoxSize, real4 invPeriodicBoxSize, 
-        unsigned int maxTiles, __global const real4* restrict blockCenter, __global const real4* restrict blockSize, __global const int* restrict interactingAtoms,
+        __global const int* restrict tiles, __global const unsigned int* restrict interactionCount, real4 periodicBoxSize, real4 invPeriodicBoxSize,
+        real4 periodicBoxVecX, real4 periodicBoxVecY, real4 periodicBoxVecZ, unsigned int maxTiles, __global const real4* restrict blockCenter,
+        __global const real4* restrict blockSize, __global const int* restrict interactingAtoms,
 #else
         unsigned int numTiles,
 #endif
@@ -62,7 +63,7 @@ __kernel void computeBornSum(
                     real4 posq2 = (real4) (localData[j].x, localData[j].y, localData[j].z, localData[j].q);
                     real4 delta = (real4) (posq2.xyz - posq1.xyz, 0);
 #ifdef USE_PERIODIC
-                    delta.xyz -= floor(delta.xyz*invPeriodicBoxSize.xyz+0.5f)*periodicBoxSize.xyz;
+                    APPLY_PERIODIC_TO_DELTA(delta)
 #endif
                     real r2 = dot(delta.xyz, delta.xyz);
 #ifdef USE_CUTOFF
@@ -111,7 +112,7 @@ __kernel void computeBornSum(
                     real4 posq2 = (real4) (localData[j].x, localData[j].y, localData[j].z, localData[j].q);
                     real4 delta = (real4) (posq2.xyz - posq1.xyz, 0);
 #ifdef USE_PERIODIC
-                    delta.xyz -= floor(delta.xyz*invPeriodicBoxSize.xyz+0.5f)*periodicBoxSize.xyz;
+                    APPLY_PERIODIC_TO_DELTA(delta)
 #endif
                     real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
 #ifdef USE_CUTOFF
@@ -177,6 +178,8 @@ __kernel void computeBornSum(
 
 #ifdef USE_CUTOFF
     unsigned int numTiles = interactionCount[0];
+    if (numTiles > maxTiles)
+        return; // There wasn't enough memory for the neighbor list.
     int pos = (int) (get_group_id(0)*(numTiles > maxTiles ? NUM_BLOCKS*((long)NUM_BLOCKS+1)/2 : numTiles)/get_num_groups(0));
     int end = (int) ((get_group_id(0)+1)*(numTiles > maxTiles ? NUM_BLOCKS*((long)NUM_BLOCKS+1)/2 : numTiles)/get_num_groups(0));
 #else
@@ -195,35 +198,31 @@ __kernel void computeBornSum(
         int x, y;
         bool singlePeriodicCopy = false;
 #ifdef USE_CUTOFF
-        if (numTiles <= maxTiles) {
-            x = tiles[pos];
-            real4 blockSizeX = blockSize[x];
-            singlePeriodicCopy = (0.5f*periodicBoxSize.x-blockSizeX.x >= CUTOFF &&
-                                  0.5f*periodicBoxSize.y-blockSizeX.y >= CUTOFF &&
-                                  0.5f*periodicBoxSize.z-blockSizeX.z >= CUTOFF);
-        }
-        else
-#endif
-        {
-            y = (int) floor(NUM_BLOCKS+0.5f-SQRT((NUM_BLOCKS+0.5f)*(NUM_BLOCKS+0.5f)-2*pos));
+        x = tiles[pos];
+        real4 blockSizeX = blockSize[x];
+        singlePeriodicCopy = (0.5f*periodicBoxSize.x-blockSizeX.x >= CUTOFF &&
+                              0.5f*periodicBoxSize.y-blockSizeX.y >= CUTOFF &&
+                              0.5f*periodicBoxSize.z-blockSizeX.z >= CUTOFF);
+#else
+        y = (int) floor(NUM_BLOCKS+0.5f-SQRT((NUM_BLOCKS+0.5f)*(NUM_BLOCKS+0.5f)-2*pos));
+        x = (pos-y*NUM_BLOCKS+y*(y+1)/2);
+        if (x < y || x >= NUM_BLOCKS) { // Occasionally happens due to roundoff error.
+            y += (x < y ? -1 : 1);
             x = (pos-y*NUM_BLOCKS+y*(y+1)/2);
-            if (x < y || x >= NUM_BLOCKS) { // Occasionally happens due to roundoff error.
-                y += (x < y ? -1 : 1);
-                x = (pos-y*NUM_BLOCKS+y*(y+1)/2);
-            }
-
-            // Skip over tiles that have exclusions, since they were already processed.
-
-            while (nextToSkip < pos) {
-                if (currentSkipIndex < NUM_TILES_WITH_EXCLUSIONS) {
-                    ushort2 tile = exclusionTiles[currentSkipIndex++];
-                    nextToSkip = tile.x + tile.y*NUM_BLOCKS - tile.y*(tile.y+1)/2;
-                }
-                else
-                    nextToSkip = end;
-            }
-            includeTile = (nextToSkip != pos);
         }
+
+        // Skip over tiles that have exclusions, since they were already processed.
+
+        while (nextToSkip < pos) {
+            if (currentSkipIndex < NUM_TILES_WITH_EXCLUSIONS) {
+                ushort2 tile = exclusionTiles[currentSkipIndex++];
+                nextToSkip = tile.x + tile.y*NUM_BLOCKS - tile.y*(tile.y+1)/2;
+            }
+            else
+                nextToSkip = end;
+        }
+        includeTile = (nextToSkip != pos);
+#endif
         if (includeTile) {
             // Load the data for this tile.
 
@@ -253,14 +252,13 @@ __kernel void computeBornSum(
 
                 real4 blockCenterX = blockCenter[x];
                 for (unsigned int tgx = 0; tgx < TILE_SIZE; tgx++) {
-                    localData[tgx].x -= floor((localData[tgx].x-blockCenterX.x)*invPeriodicBoxSize.x+0.5f)*periodicBoxSize.x;
-                    localData[tgx].y -= floor((localData[tgx].y-blockCenterX.y)*invPeriodicBoxSize.y+0.5f)*periodicBoxSize.y;
-                    localData[tgx].z -= floor((localData[tgx].z-blockCenterX.z)*invPeriodicBoxSize.z+0.5f)*periodicBoxSize.z;
+                    APPLY_PERIODIC_TO_POS_WITH_CENTER(localData[tgx], blockCenterX)
                 }
                 for (unsigned int tgx = 0; tgx < TILE_SIZE; tgx++) {
                     unsigned int atom1 = x*TILE_SIZE+tgx;
                     real bornSum = 0;
                     real4 posq1 = posq[atom1];
+                    APPLY_PERIODIC_TO_POS_WITH_CENTER(posq1, blockCenterX)
                     float2 params1 = global_params[atom1];
                     for (unsigned int j = 0; j < TILE_SIZE; j++) {
                         real4 posq2 = (real4) (localData[j].x, localData[j].y, localData[j].z, localData[j].q);
@@ -321,7 +319,7 @@ __kernel void computeBornSum(
                         real4 posq2 = (real4) (localData[j].x, localData[j].y, localData[j].z, localData[j].q);
                         real4 delta = (real4) (posq2.xyz - posq1.xyz, 0);
 #ifdef USE_PERIODIC
-                        delta.xyz -= floor(delta.xyz*invPeriodicBoxSize.xyz+0.5f)*periodicBoxSize.xyz;
+                        APPLY_PERIODIC_TO_DELTA(delta)
 #endif
                         real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
                         int atom2 = atomIndices[j];
@@ -409,15 +407,16 @@ __kernel void computeGBSAForce1(
 #else
         __global real4* restrict forceBuffers, __global real* restrict global_bornForce,
 #endif
-        __global real* restrict energyBuffer, __global const real4* restrict posq, __global const real* restrict global_bornRadii,
+        __global mixed* restrict energyBuffer, __global const real4* restrict posq, __global const real* restrict global_bornRadii,
 #ifdef USE_CUTOFF
-        __global const int* restrict tiles, __global const unsigned int* restrict interactionCount, real4 periodicBoxSize, real4 invPeriodicBoxSize, 
-        unsigned int maxTiles, __global const real4* restrict blockCenter, __global const real4* restrict blockSize, __global const int* restrict interactingAtoms,
+        __global const int* restrict tiles, __global const unsigned int* restrict interactionCount, real4 periodicBoxSize, real4 invPeriodicBoxSize,
+        real4 periodicBoxVecX, real4 periodicBoxVecY, real4 periodicBoxVecZ, unsigned int maxTiles, __global const real4* restrict blockCenter,
+        __global const real4* restrict blockSize, __global const int* restrict interactingAtoms,
 #else
         unsigned int numTiles,
 #endif
         __global const ushort2* exclusionTiles) {
-    real energy = 0.0f;
+    mixed energy = 0;
     __local AtomData2 localData[TILE_SIZE];
 
     // First loop: process tiles that contain exclusions.
@@ -452,7 +451,7 @@ __kernel void computeGBSAForce1(
                     real4 posq2 = (real4) (localData[j].x, localData[j].y, localData[j].z, localData[j].q);
                     real4 delta = (real4) (posq2.xyz - posq1.xyz, 0);
 #ifdef USE_PERIODIC
-                    delta.xyz -= floor(delta.xyz*invPeriodicBoxSize.xyz+0.5f)*periodicBoxSize.xyz;
+                    APPLY_PERIODIC_TO_DELTA(delta)
 #endif
                     real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
 #ifdef USE_CUTOFF
@@ -516,7 +515,7 @@ __kernel void computeGBSAForce1(
                     real4 posq2 = (real4) (localData[j].x, localData[j].y, localData[j].z, localData[j].q);
                     real4 delta = (real4) (posq2.xyz - posq1.xyz, 0);
 #ifdef USE_PERIODIC
-                    delta.xyz -= floor(delta.xyz*invPeriodicBoxSize.xyz+0.5f)*periodicBoxSize.xyz;
+                    APPLY_PERIODIC_TO_DELTA(delta)
 #endif
                     real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
 #ifdef USE_CUTOFF
@@ -592,6 +591,8 @@ __kernel void computeGBSAForce1(
 
 #ifdef USE_CUTOFF
     unsigned int numTiles = interactionCount[0];
+    if (numTiles > maxTiles)
+        return; // There wasn't enough memory for the neighbor list.
     int pos = (int) (get_group_id(0)*(numTiles > maxTiles ? NUM_BLOCKS*((long)NUM_BLOCKS+1)/2 : numTiles)/get_num_groups(0));
     int end = (int) ((get_group_id(0)+1)*(numTiles > maxTiles ? NUM_BLOCKS*((long)NUM_BLOCKS+1)/2 : numTiles)/get_num_groups(0));
 #else
@@ -610,35 +611,31 @@ __kernel void computeGBSAForce1(
         int x, y;
         bool singlePeriodicCopy = false;
 #ifdef USE_CUTOFF
-        if (numTiles <= maxTiles) {
-            x = tiles[pos];
-            real4 blockSizeX = blockSize[x];
-            singlePeriodicCopy = (0.5f*periodicBoxSize.x-blockSizeX.x >= CUTOFF &&
-                                  0.5f*periodicBoxSize.y-blockSizeX.y >= CUTOFF &&
-                                  0.5f*periodicBoxSize.z-blockSizeX.z >= CUTOFF);
-        }
-        else
-#endif
-        {
-            y = (int) floor(NUM_BLOCKS+0.5f-SQRT((NUM_BLOCKS+0.5f)*(NUM_BLOCKS+0.5f)-2*pos));
+        x = tiles[pos];
+        real4 blockSizeX = blockSize[x];
+        singlePeriodicCopy = (0.5f*periodicBoxSize.x-blockSizeX.x >= CUTOFF &&
+                              0.5f*periodicBoxSize.y-blockSizeX.y >= CUTOFF &&
+                              0.5f*periodicBoxSize.z-blockSizeX.z >= CUTOFF);
+#else
+        y = (int) floor(NUM_BLOCKS+0.5f-SQRT((NUM_BLOCKS+0.5f)*(NUM_BLOCKS+0.5f)-2*pos));
+        x = (pos-y*NUM_BLOCKS+y*(y+1)/2);
+        if (x < y || x >= NUM_BLOCKS) { // Occasionally happens due to roundoff error.
+            y += (x < y ? -1 : 1);
             x = (pos-y*NUM_BLOCKS+y*(y+1)/2);
-            if (x < y || x >= NUM_BLOCKS) { // Occasionally happens due to roundoff error.
-                y += (x < y ? -1 : 1);
-                x = (pos-y*NUM_BLOCKS+y*(y+1)/2);
-            }
-
-            // Skip over tiles that have exclusions, since they were already processed.
-
-            while (nextToSkip < pos) {
-                if (currentSkipIndex < NUM_TILES_WITH_EXCLUSIONS) {
-                    ushort2 tile = exclusionTiles[currentSkipIndex++];
-                    nextToSkip = tile.x + tile.y*NUM_BLOCKS - tile.y*(tile.y+1)/2;
-                }
-                else
-                    nextToSkip = end;
-            }
-            includeTile = (nextToSkip != pos);
         }
+
+        // Skip over tiles that have exclusions, since they were already processed.
+
+        while (nextToSkip < pos) {
+            if (currentSkipIndex < NUM_TILES_WITH_EXCLUSIONS) {
+                ushort2 tile = exclusionTiles[currentSkipIndex++];
+                nextToSkip = tile.x + tile.y*NUM_BLOCKS - tile.y*(tile.y+1)/2;
+            }
+            else
+                nextToSkip = end;
+        }
+        includeTile = (nextToSkip != pos);
+#endif
         if (includeTile) {
             // Load the data for this tile.
 
@@ -669,15 +666,13 @@ __kernel void computeGBSAForce1(
 
                 real4 blockCenterX = blockCenter[x];
                 for (unsigned int tgx = 0; tgx < TILE_SIZE; tgx++) {
-                    localData[tgx].x -= floor((localData[tgx].x-blockCenterX.x)*invPeriodicBoxSize.x+0.5f)*periodicBoxSize.x;
-                    localData[tgx].y -= floor((localData[tgx].y-blockCenterX.y)*invPeriodicBoxSize.y+0.5f)*periodicBoxSize.y;
-                    localData[tgx].z -= floor((localData[tgx].z-blockCenterX.z)*invPeriodicBoxSize.z+0.5f)*periodicBoxSize.z;
+                    APPLY_PERIODIC_TO_POS_WITH_CENTER(localData[tgx], blockCenterX)
                 }
                 for (unsigned int tgx = 0; tgx < TILE_SIZE; tgx++) {
                     unsigned int atom1 = x*TILE_SIZE+tgx;
                     real4 force = 0;
                     real4 posq1 = posq[atom1];
-                    posq1.xyz -= floor((posq1.xyz-blockCenterX.xyz)*invPeriodicBoxSize.xyz+0.5f)*periodicBoxSize.xyz;
+                    APPLY_PERIODIC_TO_POS_WITH_CENTER(posq1, blockCenterX)
                     float bornRadius1 = global_bornRadii[atom1];
                     for (unsigned int j = 0; j < TILE_SIZE; j++) {
                         real4 posq2 = (real4) (localData[j].x, localData[j].y, localData[j].z, localData[j].q);
@@ -740,7 +735,7 @@ __kernel void computeGBSAForce1(
                         real4 posq2 = (real4) (localData[j].x, localData[j].y, localData[j].z, localData[j].q);
                         real4 delta = (real4) (posq2.xyz - posq1.xyz, 0);
 #ifdef USE_PERIODIC
-                        delta.xyz -= floor(delta.xyz*invPeriodicBoxSize.xyz+0.5f)*periodicBoxSize.xyz;
+                        APPLY_PERIODIC_TO_DELTA(delta)
 #endif
                         real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
                         int atom2 = atomIndices[j];

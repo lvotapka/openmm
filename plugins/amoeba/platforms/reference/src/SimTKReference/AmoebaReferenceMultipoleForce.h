@@ -1,4 +1,4 @@
-/* Portions copyright (c) 2006-2014 Stanford University and Simbios.
+/* Portions copyright (c) 2006-2015 Stanford University and Simbios.
  * Contributors: Pande Group
  *
  * Permission is hereby granted, free of charge, to any person obtaining
@@ -31,9 +31,25 @@
 #include "fftpack.h"
 #include <complex>
 
+namespace OpenMM {
+
 typedef std::map< unsigned int, RealOpenMM> MapIntRealOpenMM;
 typedef MapIntRealOpenMM::iterator MapIntRealOpenMMI;
 typedef MapIntRealOpenMM::const_iterator MapIntRealOpenMMCI;
+
+
+// A few useful constants for the spherical harmonic multipole code.
+const RealOpenMM oneThird = 1.0/3.0;
+const RealOpenMM twoThirds = 2.0/3.0;
+const RealOpenMM fourThirds = 4.0/3.0;
+const RealOpenMM fourSqrtOneThird = 4.0/sqrt(3.0);
+const RealOpenMM sqrtFourThirds = 2.0/sqrt(3.0);
+const RealOpenMM sqrtOneThird = 1.0/sqrt(3.0);
+const RealOpenMM sqrtThree = sqrt(3.0);
+const RealOpenMM oneNinth = 1.0/9.0;
+const RealOpenMM fourOverFortyFive = 4.0/45.0;
+const RealOpenMM fourOverFifteen = 4.0/15.0;
+
 
 /**
  * 2-dimensional int vector
@@ -329,11 +345,16 @@ public:
          */
         Mutual = 0,
 
-        /** 
+        /**
          * Direct polarization
          */
-        Direct = 1 
-    };  
+        Direct = 1,
+
+        /**
+         * Extrapolated perturbation theory
+         */
+        Extrapolated = 2
+    };
 
     /**
      * Constructor
@@ -352,7 +373,7 @@ public:
      * Destructor
      * 
      */
-    virtual ~AmoebaReferenceMultipoleForce(){};
+    virtual ~AmoebaReferenceMultipoleForce() {};
  
     /**
      * Get nonbonded method.
@@ -405,6 +426,15 @@ public:
      *
      */
     RealOpenMM getMutualInducedDipoleEpsilon() const;
+
+    /**
+     * Set the coefficients for the µ_0, µ_1, µ_2, µ_n terms in the extrapolation
+     * theory algorithm for induced dipoles
+     *
+     * @param optCoefficients a vector whose mth entry specifies the coefficient for µ_m
+     *
+     */
+    void setExtrapolationCoefficients(const std::vector<RealOpenMM> &coefficients);
 
     /**
      * Set the target epsilon for converging mutual induced dipoles.
@@ -587,19 +617,34 @@ protected:
             RealOpenMM charge;
             RealVec dipole;
             RealOpenMM quadrupole[6];
+            RealVec sphericalDipole;
+            RealOpenMM sphericalQuadrupole[5];
             RealOpenMM thole;
             RealOpenMM dampingFactor;
             RealOpenMM polarity;
+    };
+    
+    /**
+     * Particle parameters transformed into fractional coordinates
+     */
+    class TransformedMultipole {
+    public:
+        RealOpenMM charge;
+        RealVec dipole;
+        RealOpenMM quadrupole[6];
     };
 
     /* 
      * Helper class used in calculating induced dipoles
      */
     struct UpdateInducedDipoleFieldStruct {
-            UpdateInducedDipoleFieldStruct(std::vector<OpenMM::RealVec>& inputFixed_E_Field, std::vector<OpenMM::RealVec>& inputInducedDipoles);
+            UpdateInducedDipoleFieldStruct(std::vector<OpenMM::RealVec>& inputFixed_E_Field, std::vector<OpenMM::RealVec>& inputInducedDipoles, std::vector<std::vector<RealVec> >& extrapolatedDipoles, std::vector<std::vector<RealOpenMM> >& extrapolatedDipoleFieldGradient);
             std::vector<OpenMM::RealVec>* fixedMultipoleField;
             std::vector<OpenMM::RealVec>* inducedDipoles;
+            std::vector<std::vector<RealVec> >* extrapolatedDipoles;
+            std::vector<std::vector<RealOpenMM> >* extrapolatedDipoleFieldGradient;
             std::vector<OpenMM::RealVec> inducedDipoleField;
+            std::vector<std::vector<RealOpenMM> > inducedDipoleFieldGradient;
     };
 
     unsigned int _numParticles;
@@ -618,14 +663,22 @@ protected:
     RealOpenMM _mScale[5];
     RealOpenMM _uScale[5];
 
+    std::vector<TransformedMultipole> _transformed;
     std::vector<RealVec> _fixedMultipoleField;
     std::vector<RealVec> _fixedMultipoleFieldPolar;
     std::vector<RealVec> _inducedDipole;
     std::vector<RealVec> _inducedDipolePolar;
+    std::vector<std::vector<RealVec> > _ptDipoleP;
+    std::vector<std::vector<RealVec> > _ptDipoleD;
+    std::vector<std::vector<RealOpenMM> > _ptDipoleFieldGradientP;
+    std::vector<std::vector<RealOpenMM> > _ptDipoleFieldGradientD;
 
     int _mutualInducedDipoleConverged;
     int _mutualInducedDipoleIterations;
     int _maximumMutualInducedDipoleIterations;
+    int _maxPTOrder;
+    std::vector<RealOpenMM>  _extrapolationCoefficients;
+    std::vector<RealOpenMM>  _extPartCoefficients;
     RealOpenMM  _mutualInducedDipoleEpsilon;
     RealOpenMM  _mutualInducedDipoleTargetEpsilon;
     RealOpenMM  _polarSOR;
@@ -698,15 +751,6 @@ protected:
      *
      */
     void setupScaleMaps(const std::vector< std::vector< std::vector<int> > >& multipoleAtomCovalentInfo);
-
-    /**
-     * Show scaling factor map
-     *
-     * @param particleI index of particle whose scale map is to be shown
-     * @param log       output destination 
-     * 
-     */
-    void showScaleMapForParticle(unsigned int particleI, FILE* log) const;
 
     /**
      * Get multipole scale factor for particleI & particleJ
@@ -792,6 +836,41 @@ protected:
                                              MultipoleParticleData* particleY, int axisType) const;
 
     /**
+     * Forms the rotation matrix for the quasi-internal coordinate system,
+     * which is the rotation matrix that describes the orientation of the
+     * internuclear vector for a given pair (I,J) in lab frame.
+     *
+     * @param particleI             particleI position
+     * @param particleJ             particleJ position
+     * @param deltaR                the internuclear vector, corrected for periodic boundary conditions
+     * @param r                     the bond length between atoms I and J
+     * @param rotationmatrix        the output rotation matrix for a 3-vector
+     */
+    void formQIRotationMatrix(const RealVec& iPosition,
+                              const RealVec& jPosition,
+                              const RealVec &deltaR,
+                              RealOpenMM r,
+                              RealOpenMM (&rotationMatrix)[3][3]) const;
+
+
+    /**
+     * Constructs a rotation matrix for spherical harmonic quadrupoles, using the dipole rotation matrix.
+     *
+     * @param D1                    The input spherical harmonic dipole rotation matrix
+     * @param D2                    The output spherical harmonic quadrupole rotation matrix
+     */
+     void buildSphericalQuadrupoleRotationMatrix(const RealOpenMM (&D1)[3][3], RealOpenMM (&D2)[5][5]) const;
+
+     /**
+      * Constructs a rotation matrix for spherical harmonic quadrupoles, using the dipole rotation matrix.
+      * Only the m={0,1c,1s} terms are constructed; these are the only terms needed to evaluate the field.
+      *
+      * @param D1                    The input spherical harmonic dipole rotation matrix
+      * @param D2                    The output spherical harmonic quadrupole rotation matrix
+      */
+      void buildPartialSphericalQuadrupoleRotationMatrix(const RealOpenMM (&D1)[3][3], RealOpenMM (&D2)[3][5]) const;
+
+    /**
      * Apply rotation matrix to molecular dipole/quadrupoles to get corresponding lab frame values.
      * 
      * @param particleData            vector of parameters (charge, labFrame dipoles, quadrupoles, ...) for particles
@@ -849,7 +928,7 @@ protected:
 
     /**
      * Calculate fields due induced dipoles at each site.
-     * 
+     *
      * @param particleI                 positions and parameters (charge, labFrame dipoles, quadrupoles, ...) for particle I
      * @param particleJ                 positions and parameters (charge, labFrame dipoles, quadrupoles, ...) for particle J
      * @param updateInducedDipoleFields vector of UpdateInducedDipoleFieldStruct containing input induced dipoles and output fields
@@ -865,6 +944,14 @@ protected:
      */
     virtual void calculateInducedDipoleFields(const std::vector<MultipoleParticleData>& particleData,
                                               std::vector<UpdateInducedDipoleFieldStruct>& updateInducedDipoleFields);
+    /**
+     * Calculated induced dipoles using extrapolated perturbation theory.
+     *
+     * @param particleData              vector of particle positions and parameters (charge, labFrame dipoles, quadrupoles, ...)
+     * @param updateInducedDipoleFields vector of UpdateInducedDipoleFieldStruct containing input induced dipoles and output fields
+     */
+    void convergeInduceDipolesByExtrapolation(const std::vector<MultipoleParticleData>& particleData,
+                                              std::vector<UpdateInducedDipoleFieldStruct>& calculateInducedDipoleField);
     /**
      * Converge induced dipoles.
      * 
@@ -962,7 +1049,7 @@ protected:
      * @param particleK         positions and parameters (charge, labFrame dipoles, quadrupoles, ...) for particle K
      * @param scalingFactors    scaling factors for interaction
      * @param forces            vector of particle forces to be updated
-     * @param torques           vector of particle torques to be updated
+     * @param torque            vector of particle torques to be updated
      */
     RealOpenMM calculateElectrostaticPairIxn(const MultipoleParticleData& particleI, const MultipoleParticleData& particleK,
                                              const std::vector<RealOpenMM>& scalingFactors, std::vector<OpenMM::RealVec>& forces, std::vector<RealVec>& torque) const;
@@ -976,6 +1063,7 @@ protected:
      * @param particleW               particle3 of lab frame for particleI 
      * @param axisType                axis type (Bisector/Z-then-X, ...)
      * @param torque                  torque on particle I
+     * @param forces                  vector of particle forces to be updated
      */
     void mapTorqueToForceForParticle(const MultipoleParticleData& particleI,
                                      const MultipoleParticleData& particleU,
@@ -993,8 +1081,6 @@ protected:
      * @param axisType                vector of axis types (Bisector/Z-then-X, ...) for particles
      * @param torques                 output torques
      * @param forces                  output forces 
-     *
-     * @return energy
      */
     void mapTorqueToForce(std::vector<MultipoleParticleData>& particleData, 
                           const std::vector<int>& multipoleAtomXs,
@@ -1137,6 +1223,10 @@ private:
     std::vector<RealVec> _gkField;
     std::vector<RealVec> _inducedDipoleS;
     std::vector<RealVec> _inducedDipolePolarS;
+    std::vector<std::vector<RealVec> > _ptDipolePS;
+    std::vector<std::vector<RealVec> > _ptDipoleDS;
+    std::vector<std::vector<RealOpenMM> > _ptDipoleFieldGradientPS;
+    std::vector<std::vector<RealOpenMM> > _ptDipoleFieldGradientDS;
 
     int _includeCavityTerm;
     RealOpenMM _probeRadius;
@@ -1327,9 +1417,9 @@ public:
     /**
      * Set periodic box size.
      *
-     * @param boxSize box dimensions
+     * @param vectors    the vectors defining the periodic box
      */
-     void setPeriodicBoxSize(RealVec& boxSize);
+     void setPeriodicBoxSize(OpenMM::RealVec* vectors);
 
 private:
 
@@ -1340,8 +1430,8 @@ private:
     RealOpenMM _cutoffDistance;
     RealOpenMM _cutoffDistanceSquared;
 
-    RealVec _invPeriodicBoxSize;
-    RealVec _periodicBoxSize;
+    RealVec _recipBoxVectors[3];
+    RealVec _periodicBoxVectors[3];
 
     int _totalGridSize;
     IntVec _pmeGridDimensions;
@@ -1358,8 +1448,6 @@ private:
     std::vector<RealOpenMM> _phid;
     std::vector<RealOpenMM> _phip;
     std::vector<RealOpenMM> _phidp;
-    std::vector<int> _pmeAtomRange;
-    std::vector<int2> _pmeAtomGridIndex;
     std::vector<RealOpenMM4> _pmeBsplineTheta;
     std::vector<RealOpenMM4> _pmeBsplineDtheta;
 
@@ -1377,16 +1465,10 @@ private:
     /**
      * Modify input vector of differences in particle positions for periodic boundary conditions.
      * 
-     * @param delta                   input vector of difference in particle positios; on output adjusted for
+     * @param delta                   input vector of difference in particle positions; on output adjusted for
      *                                periodic boundary conditions
      */
     void getPeriodicDelta(RealVec& deltaR) const;
-
-    /**
-     * Get PME scale.
-     * 
-     */
-    void getPmeScale(RealVec& scale) const;
 
     /**
      * Calculate damped inverse distances.
@@ -1443,34 +1525,14 @@ private:
     void computeAmoebaBsplines(const std::vector<MultipoleParticleData>& particleData);
 
     /**
-     * For each grid point, find the range of sorted atoms associated with that point.
-     * 
-     * @param particleData              vector of particle positions and parameters (charge, labFrame dipoles, quadrupoles, ...)
+     * Transform multipoles from cartesian coordinates to fractional coordinates.
      */
-    void findAmoebaAtomRangeForGrid(const vector<MultipoleParticleData>& particleData);
+    void transformMultipolesToFractionalCoordinates(const vector<MultipoleParticleData>& particleData);
 
     /**
-     * Get grid point given grid index.
-     * 
-     * @param gridIndex  input grid index
-     * @param gridPoint  output grid point
+     * Transform potential from fractional coordinates to cartesian coordinates.
      */
-    void getGridPointGivenGridIndex(int gridIndex, IntVec& gridPoint) const;
-
-    /**
-     * Compute induced dipole grid value.
-     *
-     * @param particleData            vector of particle positions and parameters (charge, labFrame dipoles, quadrupoles, ...)
-     * @param particleGridIndices     particle grid indices
-     * @param scale                   integer grid dimension/box size for each dimension
-     * @param ix                      x-dimension offset value
-     * @param iy                      y-dimension offset value
-     * @param gridPoint               grid point for which value is to be computed
-     * @param inputInducedDipole      induced dipole value
-     * @param inputInducedDipolePolar induced dipole value
-     */
-     RealOpenMM computeFixedMultipolesGridValue(const vector<MultipoleParticleData>& particleData,
-                                                const int2& particleGridIndices, const RealVec& scale, int ix, int iy, const IntVec& gridPoint) const;
+    void transformPotentialToCartesianCoordinates(const std::vector<RealOpenMM>& fphi, std::vector<RealOpenMM>& cphi) const;
 
     /**
      * Spread fixed multipoles onto PME grid.
@@ -1529,7 +1591,7 @@ private:
      * @param jIndex        particle J index
      * @param preFactor1    first factor used in calculating field
      * @param preFactor2    second factor used in calculating field
-     * @param deltaR        delta in particle positions after adjusting for periodic boundary conditions
+     * @param delta         delta in particle positions after adjusting for periodic boundary conditions
      * @param inducedDipole vector of induced dipoles
      * @param field         vector of field at each particle due induced dipole of other particles
      */
@@ -1556,21 +1618,6 @@ private:
      * @param updateInducedDipoleFields vector of UpdateInducedDipoleFieldStruct containing input induced dipoles and output fields
      */
     void initializeInducedDipoles(std::vector<UpdateInducedDipoleFieldStruct>& updateInducedDipoleFields); 
-
-    /**
-     * Compute induced dipole grid value.
-     *
-     * @param atomIndices             indices of first and last atom contiputing to grid point value
-     * @param scale                   integer grid dimension/box size for each dimension
-     * @param ix                      x-dimension offset value
-     * @param iy                      y-dimension offset value
-     * @param gridPoint               grid point for which value is to be computed
-     * @param inputInducedDipole      induced dipole value
-     * @param inputInducedDipolePolar induced dipole polar value
-     */
-    t_complex computeInducedDipoleGridValue(const int2& atomIndices, const RealVec& scale, int ix, int iy, const IntVec& gridPoint,
-                                            const std::vector<RealVec>& inputInducedDipole,
-                                            const std::vector<RealVec>& inputInducedDipolePolar) const;
 
     /**
      * Spread induced dipoles onto grid.
@@ -1654,5 +1701,7 @@ private:
                                       std::vector<OpenMM::RealVec>& forces);
 
 };
+
+} // namespace OpenMM
 
 #endif // _AmoebaReferenceMultipoleForce___

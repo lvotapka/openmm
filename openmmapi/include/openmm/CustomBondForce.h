@@ -9,7 +9,7 @@
  * Biological Structures at Stanford, funded under the NIH Roadmap for        *
  * Medical Research, grant U54 GM072970. See https://simtk.org.               *
  *                                                                            *
- * Portions copyright (c) 2008-2012 Stanford University and the Authors.      *
+ * Portions copyright (c) 2008-2016 Stanford University and the Authors.      *
  * Authors: Peter Eastman                                                     *
  * Contributors:                                                              *
  *                                                                            *
@@ -65,8 +65,9 @@ namespace OpenMM {
  * </pre></tt>
  *
  * Expressions may involve the operators + (add), - (subtract), * (multiply), / (divide), and ^ (power), and the following
- * functions: sqrt, exp, log, sin, cos, sec, csc, tan, cot, asin, acos, atan, sinh, cosh, tanh, erf, erfc, min, max, abs, step, delta.  All trigonometric functions
+ * functions: sqrt, exp, log, sin, cos, sec, csc, tan, cot, asin, acos, atan, sinh, cosh, tanh, erf, erfc, min, max, abs, floor, ceil, step, delta, select.  All trigonometric functions
  * are defined in radians, and log is the natural logarithm.  step(x) = 0 if x is less than 0, 1 otherwise.  delta(x) = 1 if x is 0, 0 otherwise.
+ * select(x,y,z) = z if x = 0, y otherwise.
  */
 
 class OPENMM_EXPORT CustomBondForce : public Force {
@@ -158,7 +159,7 @@ public:
      * Set the default value of a global parameter.
      *
      * @param index          the index of the parameter for which to set the default value
-     * @param name           the default value of the parameter
+     * @param defaultValue   the default value of the parameter
      */
     void setGlobalParameterDefaultValue(int index, double defaultValue);
     /**
@@ -169,14 +170,14 @@ public:
      * @param parameters    the list of parameters for the new bond
      * @return the index of the bond that was added
      */
-    int addBond(int particle1, int particle2, const std::vector<double>& parameters);
+    int addBond(int particle1, int particle2, const std::vector<double>& parameters=std::vector<double>());
     /**
      * Get the force field parameters for a bond term.
      *
-     * @param index         the index of the bond for which to get parameters
-     * @param particle1     the index of the first particle connected by the bond
-     * @param particle2     the index of the second particle connected by the bond
-     * @param parameters    the list of parameters for the bond
+     * @param      index         the index of the bond for which to get parameters
+     * @param[out] particle1     the index of the first particle connected by the bond
+     * @param[out] particle2     the index of the second particle connected by the bond
+     * @param[out] parameters    the list of parameters for the bond
      */
     void getBondParameters(int index, int& particle1, int& particle2, std::vector<double>& parameters) const;
     /**
@@ -187,18 +188,30 @@ public:
      * @param particle2     the index of the second particle connected by the bond
      * @param parameters    the list of parameters for the bond
      */
-    void setBondParameters(int index, int particle1, int particle2, const std::vector<double>& parameters);
+    void setBondParameters(int index, int particle1, int particle2, const std::vector<double>& parameters=std::vector<double>());
     /**
      * Update the per-bond parameters in a Context to match those stored in this Force object.  This method provides
      * an efficient method to update certain parameters in an existing Context without needing to reinitialize it.
-     * Simply call setBondParameters() to modify this object's parameters, then call updateParametersInState()
+     * Simply call setBondParameters() to modify this object's parameters, then call updateParametersInContext()
      * to copy them over to the Context.
-     * 
+     *
      * This method has several limitations.  The only information it updates is the values of per-bond parameters.
      * All other aspects of the Force (such as the energy function) are unaffected and can only be changed by reinitializing
      * the Context.  The set of particles involved in a bond cannot be changed, nor can new bonds be added.
      */
     void updateParametersInContext(Context& context);
+    /**
+     * Set whether this force should apply periodic boundary conditions when calculating displacements.
+     * Usually this is not appropriate for bonded forces, but there are situations when it can be useful.
+     */
+    void setUsesPeriodicBoundaryConditions(bool periodic);
+    /**
+     * Returns whether or not this force makes use of periodic boundary
+     * conditions.
+     *
+     * @returns true if force uses PBC and false otherwise
+     */
+    bool usesPeriodicBoundaryConditions() const;
 protected:
     ForceImpl* createImpl() const;
 private:
@@ -209,6 +222,7 @@ private:
     std::vector<BondParameterInfo> parameters;
     std::vector<GlobalParameterInfo> globalParameters;
     std::vector<BondInfo> bonds;
+    bool usePeriodic;
 };
 
 /**

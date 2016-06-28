@@ -58,10 +58,10 @@ ReferencePlatform::ReferencePlatform() {
     registerKernelFactory(CalcNonbondedForceKernel::Name(), factory);
     registerKernelFactory(CalcCustomNonbondedForceKernel::Name(), factory);
     registerKernelFactory(CalcGBSAOBCForceKernel::Name(), factory);
-    registerKernelFactory(CalcGBVIForceKernel::Name(), factory);
     registerKernelFactory(CalcCustomGBForceKernel::Name(), factory);
     registerKernelFactory(CalcCustomExternalForceKernel::Name(), factory);
     registerKernelFactory(CalcCustomHbondForceKernel::Name(), factory);
+    registerKernelFactory(CalcCustomCentroidBondForceKernel::Name(), factory);
     registerKernelFactory(CalcCustomCompoundBondForceKernel::Name(), factory);
     registerKernelFactory(CalcCustomManyParticleForceKernel::Name(), factory);
     registerKernelFactory(IntegrateVerletStepKernel::Name(), factory);
@@ -97,6 +97,7 @@ ReferencePlatform::PlatformData::PlatformData(const System& system) : time(0.0),
     velocities = new vector<RealVec>(numParticles);
     forces = new vector<RealVec>(numParticles);
     periodicBoxSize = new RealVec();
+    periodicBoxVectors = new RealVec[3];
     constraints = new ReferenceConstraints(system);
 }
 
@@ -105,5 +106,6 @@ ReferencePlatform::PlatformData::~PlatformData() {
     delete (vector<RealVec>*) velocities;
     delete (vector<RealVec>*) forces;
     delete (RealVec*) periodicBoxSize;
+    delete[] (RealVec*) periodicBoxVectors;
     delete (ReferenceConstraints*) constraints;
 }

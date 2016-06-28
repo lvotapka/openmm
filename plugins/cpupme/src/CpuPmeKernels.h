@@ -9,7 +9,7 @@
  * Biological Structures at Stanford, funded under the NIH Roadmap for        *
  * Medical Research, grant U54 GM072970. See https://simtk.org.               *
  *                                                                            *
- * Portions copyright (c) 2013 Stanford University and the Authors.           *
+ * Portions copyright (c) 2013-2015 Stanford University and the Authors.      *
  * Authors: Peter Eastman                                                     *
  * Contributors:                                                              *
  *                                                                            *
@@ -32,9 +32,12 @@
  * USE OR OTHER DEALINGS IN THE SOFTWARE.                                     *
  * -------------------------------------------------------------------------- */
 
+#define NOMINMAX
 #include "internal/windowsExportPme.h"
 #include "openmm/kernels.h"
 #include "openmm/Vec3.h"
+#include "openmm/internal/gmx_atomic.h"
+#include "openmm/internal/ThreadPool.h"
 #include <fftw3.h>
 #include <pthread.h>
 #include <vector>
@@ -48,7 +51,6 @@ namespace OpenMM {
 
 class OPENMM_EXPORT_PME CpuCalcPmeReciprocalForceKernel : public CalcPmeReciprocalForceKernel {
 public:
-    class ThreadData;
     CpuCalcPmeReciprocalForceKernel(std::string name, const Platform& platform) : CalcPmeReciprocalForceKernel(name, platform),
             hasCreatedPlan(false), isDeleted(false), realGrid(NULL), complexGrid(NULL) {
     }
@@ -66,11 +68,11 @@ public:
     /**
      * Begin computing the force and energy.
      * 
-     * @param io               an object that coordinates data transfer
-     * @param periodicBoxSize  the size of the periodic box (measured in nm)
-     * @param includeEnergy    true if potential energy should be computed
+     * @param io                  an object that coordinates data transfer
+     * @param periodicBoxVectors  the vectors defining the periodic box (measured in nm)
+     * @param includeEnergy       true if potential energy should be computed
      */
-    void beginComputation(IO& io, Vec3 periodicBoxSize, bool includeEnergy);
+    void beginComputation(IO& io, const Vec3* periodicBoxVectors, bool includeEnergy);
     /**
      * Finish computing the force and energy.
      * 
@@ -79,26 +81,32 @@ public:
      */
     double finishComputation(IO& io);
     /**
-     * This routine contains the code executed by each thread.
+     * This routine contains the code executed by the main thread.
      */
-    void runThread(int index);
+    void runMainThread();
+    /**
+     * This routine contains the code executed by each worker thread.
+     */
+    void runWorkerThread(ThreadPool& threads, int index);
     /**
      * Get whether the current CPU supports all features needed by this kernel.
      */
     static bool isProcessorSupported();
+    /**
+     * Get the parameters being used for PME.
+     * 
+     * @param alpha   the separation parameter
+     * @param nx      the number of grid points along the X axis
+     * @param ny      the number of grid points along the Y axis
+     * @param nz      the number of grid points along the Z axis
+     */
+    void getPMEParameters(double& alpha, int& nx, int& ny, int& nz) const;
 private:
-    /**
-     * This is called by the worker threads to wait until the master thread instructs them to advance.
-     */
-    void threadWait();
-    /**
-     * This is called by the master thread to instruct all the worker threads to advance.
-     */
-    void advanceThreads();
+    class ComputeTask;
     /**
      * Select a size for one grid dimension that FFTW can handle efficiently.
      */
-    int findFFTDimension(int minimum);
+    int findFFTDimension(int minimum, bool isZ);
     static bool hasInitializedThreads;
     static int numThreads;
     int gridx, gridy, gridz, numParticles;
@@ -107,23 +115,23 @@ private:
     std::vector<float> force;
     std::vector<float> bsplineModuli[3];
     std::vector<float> recipEterm;
-    Vec3 lastBoxSize;
+    Vec3 lastBoxVectors[3];
+    std::vector<float> threadEnergy;
+    std::vector<float*> tempGrid;
     float* realGrid;
     fftwf_complex* complexGrid;
     fftwf_plan forwardFFT, backwardFFT;
     int waitCount;
     pthread_cond_t startCondition, endCondition;
-    pthread_cond_t mainThreadStartCondition, mainThreadEndCondition;
     pthread_mutex_t lock;
     pthread_t mainThread;
-    std::vector<pthread_t> thread;
-    std::vector<ThreadData*> threadData;
     // The following variables are used to store information about the calculation currently being performed.
     IO* io;
     float energy;
     float* posq;
-    Vec3 periodicBoxSize;
+    Vec3 periodicBoxVectors[3], recipBoxVectors[3];
     bool includeEnergy;
+    gmx_atomic_t atomicCounter;
 };
 
 } // namespace OpenMM

@@ -25,12 +25,11 @@
 #ifndef __ReferenceCMAPTorsionIxn_H__
 #define __ReferenceCMAPTorsionIxn_H__
 
-#include "SimTKOpenMMCommon.h"
 #include "SimTKOpenMMUtilities.h"
 #include "ReferenceBondIxn.h"
 #include <vector>
 
-// ---------------------------------------------------------------------------------------
+namespace OpenMM {
 
 class ReferenceCMAPTorsionIxn : public ReferenceBondIxn {
 
@@ -39,6 +38,8 @@ private:
     std::vector<std::vector<std::vector<RealOpenMM> > > coeff;
     std::vector<int> torsionMaps;
     std::vector<std::vector<int> > torsionIndices;
+    bool usePeriodic;
+    RealVec boxVectors[3];
 
     /**---------------------------------------------------------------------------------------
 
@@ -66,6 +67,16 @@ public:
                             const std::vector<int>& torsionMaps,
                             const std::vector<std::vector<int> >& torsionIndices);
 
+       /**---------------------------------------------------------------------------------------
+      
+         Set the force to use periodic boundary conditions.
+      
+         @param vectors    the vectors defining the periodic box
+      
+         --------------------------------------------------------------------------------------- */
+      
+       void setPeriodic(OpenMM::RealVec* vectors);
+
     /**---------------------------------------------------------------------------------------
 
        Calculate torsion interaction
@@ -91,5 +102,7 @@ public:
 // ---------------------------------------------------------------------------------------
 
 };
+
+} // namespace OpenMM
 
 #endif // __ReferenceCMAPTorsionIxn_H__

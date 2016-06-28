@@ -9,7 +9,7 @@
  * Biological Structures at Stanford, funded under the NIH Roadmap for        *
  * Medical Research, grant U54 GM072970. See https://simtk.org.               *
  *                                                                            *
- * Portions copyright (c) 2008-2013 Stanford University and the Authors.      *
+ * Portions copyright (c) 2008-2015 Stanford University and the Authors.      *
  * Authors: Peter Eastman                                                     *
  * Contributors:                                                              *
  *                                                                            *
@@ -166,6 +166,11 @@ public:
      */
     void setVelocitiesToTemperature(double temperature, int randomSeed=osrngseed());
     /**
+     * Get all adjustable parameters that have been defined by Force objects in the System, along
+     * with their current values.
+     */
+    const std::map<std::string, double>& getParameters() const;
+    /**
      * Get the value of an adjustable parameter defined by a Force object in the System.
      * 
      * @param name the name of the parameter to get
@@ -182,8 +187,9 @@ public:
      * Set the vectors defining the axes of the periodic box (measured in nm).  They will affect
      * any Force that uses periodic boundary conditions.
      *
-     * Currently, only rectangular boxes are supported.  This means that a, b, and c must be aligned with the
-     * x, y, and z axes respectively.  Future releases may support arbitrary triclinic boxes.
+     * Triclinic boxes are supported, but the vectors must satisfy certain requirements.  In particular,
+     * a must point in the x direction, b must point "mostly" in the y direction, and c must point "mostly"
+     * in the z direction.  See the documentation for details.
      *
      * @param a      the vector defining the first edge of the periodic box
      * @param b      the vector defining the second edge of the periodic box
@@ -260,6 +266,7 @@ private:
     friend class Force;
     friend class Platform;
     ContextImpl& getImpl();
+    const ContextImpl& getImpl() const;
     ContextImpl* impl;
     std::map<std::string, std::string> properties;
 };

@@ -6,7 +6,7 @@
  * Biological Structures at Stanford, funded under the NIH Roadmap for        *
  * Medical Research, grant U54 GM072970. See https://simtk.org.               *
  *                                                                            *
- * Portions copyright (c) 2011-2012 Stanford University and the Authors.      *
+ * Portions copyright (c) 2011-2014 Stanford University and the Authors.      *
  * Authors: Peter Eastman                                                     *
  * Contributors:                                                              *
  *                                                                            *
@@ -34,24 +34,35 @@
 #include "openmm/OpenMMException.h"
 #include "openmm/internal/AssertionUtilities.h"
 #include "openmm/internal/ContextImpl.h"
-#include "openmm/internal/OSRngSeed.h"
 #include "openmm/kernels.h"
+#include <set>
 #include <string>
 
 using namespace OpenMM;
-using std::string;
-using std::vector;
+using namespace std;
 
 CustomIntegrator::CustomIntegrator(double stepSize) : globalsAreCurrent(true), forcesAreValid(false) {
     setStepSize(stepSize);
     setConstraintTolerance(1e-5);
-    setRandomNumberSeed(osrngseed());
+    setRandomNumberSeed(0);
     kineticEnergy = "m*v*v/2";
 }
 
 void CustomIntegrator::initialize(ContextImpl& contextRef) {
     if (owner != NULL && &contextRef.getOwner() != owner)
         throw OpenMMException("This Integrator is already bound to a context");
+    vector<std::string> variableList;
+    set<std::string> variableSet;
+    variableList.insert(variableList.end(), globalNames.begin(), globalNames.end());
+    variableList.insert(variableList.end(), perDofNames.begin(), perDofNames.end());
+    for (int i = 0; i < (int) variableList.size(); i++) {
+        string& name = variableList[i];
+        if (variableSet.find(name) != variableSet.end())
+            throw OpenMMException("The Integrator defines two variables with the same name: "+name);
+        variableSet.insert(name);
+        if (contextRef.getParameters().find(name) != contextRef.getParameters().end())
+            throw OpenMMException("The Integrator defines a variable with the same name as a Context parameter: "+name);
+    }
     context = &contextRef;
     owner = &contextRef.getOwner();
     kernel = context->getPlatform().createKernel(IntegrateCustomStepKernel::Name(), contextRef);
@@ -83,6 +94,8 @@ double CustomIntegrator::computeKineticEnergy() {
 }
 
 void CustomIntegrator::step(int steps) {
+    if (context == NULL)
+        throw OpenMMException("This Integrator is not bound to a context!");  
     globalsAreCurrent = false;
     for (int i = 0; i < steps; ++i) {
         kernel.getAs<IntegrateCustomStepKernel>().execute(*context, *this, forcesAreValid);
@@ -229,6 +242,27 @@ int CustomIntegrator::addUpdateContextState() {
     if (owner != NULL)
         throw OpenMMException("The integrator cannot be modified after it is bound to a context");
     computations.push_back(ComputationInfo(UpdateContextState, "", ""));
+    return computations.size()-1;
+}
+
+int CustomIntegrator::beginIfBlock(const string& expression) {
+    if (owner != NULL)
+        throw OpenMMException("The integrator cannot be modified after it is bound to a context");
+    computations.push_back(ComputationInfo(IfBlockStart, "", expression));
+    return computations.size()-1;
+}
+
+int CustomIntegrator::beginWhileBlock(const string& expression) {
+    if (owner != NULL)
+        throw OpenMMException("The integrator cannot be modified after it is bound to a context");
+    computations.push_back(ComputationInfo(WhileBlockStart, "", expression));
+    return computations.size()-1;
+}
+
+int CustomIntegrator::endBlock() {
+    if (owner != NULL)
+        throw OpenMMException("The integrator cannot be modified after it is bound to a context");
+    computations.push_back(ComputationInfo(BlockEnd, "", ""));
     return computations.size()-1;
 }
 

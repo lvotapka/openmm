@@ -1,5 +1,5 @@
 
-/* Portions copyright (c) 2009-2013 Stanford University and Simbios.
+/* Portions copyright (c) 2009-2016 Stanford University and Simbios.
  * Contributors: Peter Eastman
  *
  * Permission is hereby granted, free of charge, to any person obtaining
@@ -28,7 +28,7 @@
 #include "ReferenceBondIxn.h"
 #include "lepton/CompiledExpression.h"
 
-// ---------------------------------------------------------------------------------------
+namespace OpenMM {
 
 class ReferenceCustomBondIxn : public ReferenceBondIxn {
 
@@ -40,6 +40,8 @@ class ReferenceCustomBondIxn : public ReferenceBondIxn {
       double* energyR;
       double* forceR;
       int numParameters;
+      bool usePeriodic;
+      RealVec boxVectors[3];
 
    public:
 
@@ -58,7 +60,17 @@ class ReferenceCustomBondIxn : public ReferenceBondIxn {
 
          --------------------------------------------------------------------------------------- */
 
-       ~ReferenceCustomBondIxn( );
+       ~ReferenceCustomBondIxn();
+
+       /**---------------------------------------------------------------------------------------
+      
+         Set the force to use periodic boundary conditions.
+      
+         @param vectors    the vectors defining the periodic box
+      
+         --------------------------------------------------------------------------------------- */
+      
+      void setPeriodic(OpenMM::RealVec* vectors);
 
       /**---------------------------------------------------------------------------------------
 
@@ -72,13 +84,13 @@ class ReferenceCustomBondIxn : public ReferenceBondIxn {
 
          --------------------------------------------------------------------------------------- */
 
-      void calculateBondIxn( int* atomIndices, std::vector<OpenMM::RealVec>& atomCoordinates,
+      void calculateBondIxn(int* atomIndices, std::vector<OpenMM::RealVec>& atomCoordinates,
                             RealOpenMM* parameters, std::vector<OpenMM::RealVec>& forces,
-                            RealOpenMM* totalEnergy ) const;
+                            RealOpenMM* totalEnergy) const;
 
 
 };
 
-// ---------------------------------------------------------------------------------------
+} // namespace OpenMM
 
 #endif // _ReferenceCustomBondIxn___

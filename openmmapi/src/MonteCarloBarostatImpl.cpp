@@ -31,6 +31,7 @@
 
 #include "openmm/internal/MonteCarloBarostatImpl.h"
 #include "openmm/internal/ContextImpl.h"
+#include "openmm/internal/OSRngSeed.h"
 #include "openmm/Context.h"
 #include "openmm/kernels.h"
 #include <cmath>
@@ -58,7 +59,10 @@ void MonteCarloBarostatImpl::initialize(ContextImpl& context) {
     volumeScale = 0.01*volume;
     numAttempted = 0;
     numAccepted = 0;
-    init_gen_rand(owner.getRandomNumberSeed(), random);
+    int randSeed = owner.getRandomNumberSeed();
+    // A random seed of 0 means use a unique one
+    if (randSeed == 0) randSeed = osrngseed();
+    init_gen_rand(randSeed, random);
 }
 
 void MonteCarloBarostatImpl::updateContextState(ContextImpl& context) {
@@ -85,7 +89,7 @@ void MonteCarloBarostatImpl::updateContextState(ContextImpl& context) {
     
     double finalEnergy = context.getOwner().getState(State::Energy).getPotentialEnergy();
     double pressure = context.getParameter(MonteCarloBarostat::Pressure())*(AVOGADRO*1e-25);
-    double kT = BOLTZ*owner.getTemperature();
+    double kT = BOLTZ*context.getParameter(MonteCarloBarostat::Temperature());
     double w = finalEnergy-initialEnergy + pressure*deltaVolume - context.getMolecules().size()*kT*std::log(newVolume/volume);
     if (w > 0 && genrand_real2(random) > std::exp(-w/kT)) {
         // Reject the step.
@@ -114,6 +118,7 @@ void MonteCarloBarostatImpl::updateContextState(ContextImpl& context) {
 std::map<std::string, double> MonteCarloBarostatImpl::getDefaultParameters() {
     std::map<std::string, double> parameters;
     parameters[MonteCarloBarostat::Pressure()] = getOwner().getDefaultPressure();
+    parameters[MonteCarloBarostat::Temperature()] = getOwner().getDefaultTemperature();
     return parameters;
 }
 

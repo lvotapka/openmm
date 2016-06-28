@@ -6,7 +6,7 @@
  * Biological Structures at Stanford, funded under the NIH Roadmap for        *
  * Medical Research, grant U54 GM072970. See https://simtk.org.               *
  *                                                                            *
- * Portions copyright (c) 2010 Stanford University and the Authors.           *
+ * Portions copyright (c) 2010-2016 Stanford University and the Authors.      *
  * Authors: Peter Eastman                                                     *
  * Contributors:                                                              *
  *                                                                            *
@@ -43,16 +43,18 @@ AmoebaInPlaneAngleForceProxy::AmoebaInPlaneAngleForceProxy() : SerializationProx
 
 void AmoebaInPlaneAngleForceProxy::serialize(const void* object, SerializationNode& node) const {
 
-    node.setIntProperty("version", 1);
+    node.setIntProperty("version", 3);
     const AmoebaInPlaneAngleForce& force = *reinterpret_cast<const AmoebaInPlaneAngleForce*>(object);
 
+    node.setIntProperty("forceGroup", force.getForceGroup());
+    node.setBoolProperty("usesPeriodic", force.usesPeriodicBoundaryConditions());
     node.setDoubleProperty("cubic",      force.getAmoebaGlobalInPlaneAngleCubic());
     node.setDoubleProperty("quartic",    force.getAmoebaGlobalInPlaneAngleQuartic());
     node.setDoubleProperty("pentic",     force.getAmoebaGlobalInPlaneAnglePentic());
     node.setDoubleProperty("sextic",     force.getAmoebaGlobalInPlaneAngleSextic());
 
     SerializationNode& bonds = node.createChildNode("InPlaneAngles");
-    for ( unsigned int ii = 0; ii < static_cast<unsigned int>(force.getNumAngles()); ii++) {
+    for (unsigned int ii = 0; ii < static_cast<unsigned int>(force.getNumAngles()); ii++) {
         int particle1, particle2, particle3, particle4;
         double distance, k;
         force.getAngleParameters(ii, particle1, particle2, particle3, particle4, distance, k);
@@ -61,15 +63,19 @@ void AmoebaInPlaneAngleForceProxy::serialize(const void* object, SerializationNo
 }
 
 void* AmoebaInPlaneAngleForceProxy::deserialize(const SerializationNode& node) const {
-    if (node.getIntProperty("version") != 1)
+    int version = node.getIntProperty("version");
+    if (version < 1 || version > 3)
         throw OpenMMException("Unsupported version number");
     AmoebaInPlaneAngleForce* force = new AmoebaInPlaneAngleForce();
     try {
-
-        force->setAmoebaGlobalInPlaneAngleCubic(  node.getDoubleProperty("cubic"));
+        if (version > 1)
+            force->setForceGroup(node.getIntProperty("forceGroup", 0));
+        if (version > 2)
+            force->setUsesPeriodicBoundaryConditions(node.getBoolProperty("usesPeriodic"));
+        force->setAmoebaGlobalInPlaneAngleCubic( node.getDoubleProperty("cubic"));
         force->setAmoebaGlobalInPlaneAngleQuartic(node.getDoubleProperty("quartic"));
-        force->setAmoebaGlobalInPlaneAnglePentic( node.getDoubleProperty("pentic"));
-        force->setAmoebaGlobalInPlaneAngleSextic( node.getDoubleProperty("sextic"));
+        force->setAmoebaGlobalInPlaneAnglePentic(node.getDoubleProperty("pentic"));
+        force->setAmoebaGlobalInPlaneAngleSextic(node.getDoubleProperty("sextic"));
 
         const SerializationNode& bonds = node.getChildNode("InPlaneAngles");
         for (unsigned int ii = 0; ii < bonds.getChildren().size(); ii++) {

@@ -68,7 +68,7 @@ class WrapperGenerator:
     
     def __init__(self, inputDirname, output):
         self.skipClasses = ['OpenMM::Vec3', 'OpenMM::XmlSerializer', 'OpenMM::Kernel', 'OpenMM::KernelImpl', 'OpenMM::KernelFactory', 'OpenMM::ContextImpl', 'OpenMM::SerializationNode', 'OpenMM::SerializationProxy']
-        self.skipMethods = ['OpenMM::Context::getState', 'OpenMM::Platform::loadPluginsFromDirectory', 'OpenMM::Context::createCheckpoint', 'OpenMM::Context::loadCheckpoint', 'OpenMM::Context::getMolecules']
+        self.skipMethods = ['OpenMM::Context::getState', 'OpenMM::Platform::loadPluginsFromDirectory', 'OpenMM::Platform::getPluginLoadFailures', 'OpenMM::Context::createCheckpoint', 'OpenMM::Context::loadCheckpoint', 'OpenMM::Context::getMolecules']
         self.hideClasses = ['Kernel', 'KernelImpl', 'KernelFactory', 'ContextImpl', 'SerializationNode', 'SerializationProxy']
         self.nodeByID={}
 
@@ -397,7 +397,9 @@ extern OPENMM_EXPORT void %(name)s_insert(%(name)s* set, %(type)s value);""" % v
 /* These methods need to be handled specially, since their C++ APIs cannot be directly translated to C.
    Unlike the C++ versions, the return value is allocated on the heap, and you must delete it yourself. */
 extern OPENMM_EXPORT OpenMM_State* OpenMM_Context_getState(const OpenMM_Context* target, int types, int enforcePeriodicBox);
+extern OPENMM_EXPORT OpenMM_State* OpenMM_Context_getState_2(const OpenMM_Context* target, int types, int enforcePeriodicBox, int groups);
 extern OPENMM_EXPORT OpenMM_StringArray* OpenMM_Platform_loadPluginsFromDirectory(const char* directory);
+extern OPENMM_EXPORT OpenMM_StringArray* OpenMM_Platform_getPluginLoadFailures();
 extern OPENMM_EXPORT char* OpenMM_XmlSerializer_serializeSystem(const OpenMM_System* system);
 extern OPENMM_EXPORT char* OpenMM_XmlSerializer_serializeState(const OpenMM_State* state);
 extern OPENMM_EXPORT char* OpenMM_XmlSerializer_serializeIntegrator(const OpenMM_Integrator* integrator);
@@ -800,8 +802,16 @@ OPENMM_EXPORT OpenMM_State* OpenMM_Context_getState(const OpenMM_Context* target
     State result = reinterpret_cast<const Context*>(target)->getState(types, enforcePeriodicBox);
     return reinterpret_cast<OpenMM_State*>(new State(result));
 }
+OPENMM_EXPORT OpenMM_State* OpenMM_Context_getState_2(const OpenMM_Context* target, int types, int enforcePeriodicBox, int groups) {
+    State result = reinterpret_cast<const Context*>(target)->getState(types, enforcePeriodicBox, groups);
+    return reinterpret_cast<OpenMM_State*>(new State(result));
+}
 OPENMM_EXPORT OpenMM_StringArray* OpenMM_Platform_loadPluginsFromDirectory(const char* directory) {
     vector<string> result = Platform::loadPluginsFromDirectory(string(directory));
+    return reinterpret_cast<OpenMM_StringArray*>(new vector<string>(result));
+}
+OPENMM_EXPORT OpenMM_StringArray* OpenMM_Platform_getPluginLoadFailures() {
+    vector<string> result = Platform::getPluginLoadFailures();
     return reinterpret_cast<OpenMM_StringArray*>(new vector<string>(result));
 }
 static char* createStringFromStream(stringstream& stream) {
@@ -974,6 +984,7 @@ class FortranHeaderGenerator(WrapperGenerator):
             hasReturnValue = (returnType in ('integer*4', 'real*8'))
             hasReturnArg = not (hasReturnValue or returnType == 'void')
             functionName = "%s_%s" % (typeName, methodName)
+            functionName = functionName[:63]
             if hasReturnValue:
                 self.out.write("        function ")
             else:
@@ -1308,9 +1319,21 @@ MODULE OpenMM
             integer*4 enforcePeriodicBox
             type(OpenMM_State) result
         end subroutine
+        subroutine OpenMM_Context_getState_2(target, types, enforcePeriodicBox, groups, result)
+            use OpenMM_Types; implicit none
+            type (OpenMM_Context) target
+            integer*4 types
+            integer*4 enforcePeriodicBox
+            integer*4 groups
+            type(OpenMM_State) result
+        end subroutine
         subroutine OpenMM_Platform_loadPluginsFromDirectory(directory, result)
             use OpenMM_Types; implicit none
             character(*) directory
+            type(OpenMM_StringArray) result
+        end subroutine
+        subroutine OpenMM_Platform_getPluginLoadFailures(result)
+            use OpenMM_Types; implicit none
             type(OpenMM_StringArray) result
         end subroutine
         subroutine OpenMM_XmlSerializer_serializeSystemToC(system, result, result_length)
@@ -1517,8 +1540,9 @@ class FortranSourceGenerator(WrapperGenerator):
                 # There are two identical methods that differ only in whether they are const.  Skip the const one.
                 continue
             functionName = "%s_%s" % (typeName, methodName)
-            self.writeOneMethod(classNode, methodNode, functionName, functionName.lower()+'_')
-            self.writeOneMethod(classNode, methodNode, functionName, functionName.upper())
+            truncatedName = functionName[:63]
+            self.writeOneMethod(classNode, methodNode, functionName, truncatedName.lower()+'_')
+            self.writeOneMethod(classNode, methodNode, functionName, truncatedName.upper())
     
     def writeOneConstructor(self, classNode, methodNode, functionName, wrapperFunctionName):
         className = getText("compoundname", classNode)
@@ -1980,11 +2004,23 @@ OPENMM_EXPORT void openmm_context_getstate_(const OpenMM_Context*& target, int c
 OPENMM_EXPORT void OPENMM_CONTEXT_GETSTATE(const OpenMM_Context*& target, int const& types, int const& enforcePeriodicBox, OpenMM_State*& result) {
     result = OpenMM_Context_getState(target, types, enforcePeriodicBox);
 }
+OPENMM_EXPORT void openmm_context_getstate_2_(const OpenMM_Context*& target, int const& types, int const& enforcePeriodicBox, int const& groups, OpenMM_State*& result) {
+    result = OpenMM_Context_getState_2(target, types, enforcePeriodicBox, groups);
+}
+OPENMM_EXPORT void OPENMM_CONTEXT_GETSTATE_2(const OpenMM_Context*& target, int const& types, int const& enforcePeriodicBox, int const& groups, OpenMM_State*& result) {
+    result = OpenMM_Context_getState_2(target, types, enforcePeriodicBox, groups);
+}
 OPENMM_EXPORT void openmm_platform_loadpluginsfromdirectory_(const char* directory, OpenMM_StringArray*& result, int length) {
     result = OpenMM_Platform_loadPluginsFromDirectory(makeString(directory, length).c_str());
 }
 OPENMM_EXPORT void OPENMM_PLATFORM_LOADPLUGINSFROMDIRECTORY(const char* directory, OpenMM_StringArray*& result, int length) {
     result = OpenMM_Platform_loadPluginsFromDirectory(makeString(directory, length).c_str());
+}
+OPENMM_EXPORT void openmm_platform_getpluginloadfailures_(OpenMM_StringArray*& result) {
+    result = OpenMM_Platform_getPluginLoadFailures();
+}
+OPENMM_EXPORT void OPENMM_PLATFORM_GETPLUGINLOADFAILURES(OpenMM_StringArray*& result) {
+    result = OpenMM_Platform_getPluginLoadFailures();
 }
 OPENMM_EXPORT void openmm_xmlserializer_serializesystemtoc_(OpenMM_System*& system, char*& result, int& result_length) {
     convertStringToChars(OpenMM_XmlSerializer_serializeSystem(system), result, result_length);

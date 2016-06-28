@@ -6,7 +6,7 @@ Simbios, the NIH National Center for Physics-Based Simulation of
 Biological Structures at Stanford, funded under the NIH Roadmap for
 Medical Research, grant U54 GM072970. See https://simtk.org.
 
-Portions copyright (c) 2012 Stanford University and the Authors.
+Portions copyright (c) 2012-2015 Stanford University and the Authors.
 Authors: Lee-Ping Wang, Peter Eastman
 Contributors:
 
@@ -28,6 +28,7 @@ DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
 OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
+from __future__ import absolute_import
 __author__ = "Lee-Ping Wang"
 __version__ = "1.0"
 
@@ -36,7 +37,7 @@ import sys
 from simtk.openmm import Vec3
 from re import sub, match
 from simtk.unit import nanometers, angstroms, Quantity
-import element as elem
+from . import element as elem
 try:
     import numpy
 except:
@@ -89,6 +90,18 @@ def _is_gro_box(line):
     else:
         return 0
 
+def _construct_box_vectors(line):
+    """Create the periodic box vectors based on the values stored in the file.
+
+    @param[in] line The line containing the description
+    """
+
+    sline = line.split()
+    values = [float(i) for i in sline]
+    if len(sline) == 3:
+        return (Vec3(values[0], 0, 0), Vec3(0, values[1], 0), Vec3(0, 0, values[2]))*nanometers
+    return (Vec3(values[0], values[3], values[4]), Vec3(values[5], values[1], values[6]), Vec3(values[7], values[8], values[2]))*nanometers
+
 class GromacsGroFile(object):
     """GromacsGroFile parses a Gromacs .gro file and constructs a set of atom positions from it.
 
@@ -101,10 +114,11 @@ class GromacsGroFile(object):
 
         The atom positions can be retrieved by calling getPositions().
 
-        Parameters:
-         - file (string) the name of the file to load
+        Parameters
+        ----------
+        file : string
+            the name of the file to load
         """
-
         xyzs     = []
         elements = [] # The element, most useful for quantum chemistry calculations
         atomname = [] # The atom name, for instance 'HW1'
@@ -140,7 +154,7 @@ class GromacsGroFile(object):
                 xyz.append(Vec3(pos[0], pos[1], pos[2]))
             elif _is_gro_box(line) and ln == na + 2:
                 sline = line.split()
-                boxes.append(tuple([float(i) for i in sline])*nanometers)
+                boxes.append(_construct_box_vectors(line))
                 xyzs.append(xyz*nanometers)
                 xyz = []
                 ln = -1
@@ -160,7 +174,7 @@ class GromacsGroFile(object):
         ## A list containing the name of the residue that each atom belongs to
         self.residueNames = resname
         self._positions = xyzs
-        self._unitCellDimensions = boxes
+        self._periodicBoxVectors = boxes
         self._numpyPositions = None
 
     def getNumFrames(self):
@@ -170,10 +184,14 @@ class GromacsGroFile(object):
     def getPositions(self, asNumpy=False, frame=0):
         """Get the atomic positions.
 
-        Parameters:
-         - asNumpy (boolean=False) if true, the values are returned as a numpy array instead of a list of Vec3s
-         - frame (int=0) the index of the frame for which to get positions
-         """
+        Parameters
+        ----------
+        asNumpy : boolean=False
+            if true, the values are returned as a numpy array instead of a list
+            of Vec3s
+        frame : int=0
+            the index of the frame for which to get positions
+        """
         if asNumpy:
             if self._numpyPositions is None:
                 self._numpyPositions = [None]*len(self._positions)
@@ -182,10 +200,25 @@ class GromacsGroFile(object):
             return self._numpyPositions[frame]
         return self._positions[frame]
 
+    def getPeriodicBoxVectors(self, frame=0):
+        """Get the vectors defining the periodic box.
+
+        Parameters
+        ----------
+        frame : int=0
+            the index of the frame for which to get the box vectors
+        """
+        return self._periodicBoxVectors[frame]
+
     def getUnitCellDimensions(self, frame=0):
         """Get the dimensions of the crystallographic unit cell.
 
-        Parameters:
-         - frame (int=0) the index of the frame for which to get the unit cell dimensions
+        Parameters
+        ----------
+        frame : int=0
+            the index of the frame for which to get the unit cell dimensions
         """
-        return self._unitCellDimensions[frame]
+        xsize = self._periodicBoxVectors[frame][0][0].value_in_unit(nanometers)
+        ysize = self._periodicBoxVectors[frame][1][1].value_in_unit(nanometers)
+        zsize = self._periodicBoxVectors[frame][2][2].value_in_unit(nanometers)
+        return Vec3(xsize, ysize, zsize)*nanometers

@@ -6,7 +6,7 @@
  * Biological Structures at Stanford, funded under the NIH Roadmap for        *
  * Medical Research, grant U54 GM072970. See https://simtk.org.               *
  *                                                                            *
- * Portions copyright (c) 2008-2013 Stanford University and the Authors.      *
+ * Portions copyright (c) 2008-2015 Stanford University and the Authors.      *
  * Authors: Peter Eastman                                                     *
  * Contributors:                                                              *
  *                                                                            *
@@ -33,7 +33,6 @@
 #include "openmm/Context.h"
 #include "openmm/OpenMMException.h"
 #include "openmm/internal/ContextImpl.h"
-#include "openmm/internal/OSRngSeed.h"
 #include "openmm/DrudeKernels.h"
 #include <ctime>
 #include <string>
@@ -47,9 +46,20 @@ DrudeLangevinIntegrator::DrudeLangevinIntegrator(double temperature, double fric
     setFriction(frictionCoeff);
     setDrudeTemperature(drudeTemperature);
     setDrudeFriction(drudeFrictionCoeff);
+    setMaxDrudeDistance(0);
     setStepSize(stepSize);
     setConstraintTolerance(1e-5);
-    setRandomNumberSeed(osrngseed());
+    setRandomNumberSeed(0);
+}
+
+double DrudeLangevinIntegrator::getMaxDrudeDistance() const {
+    return maxDrudeDistance;
+}
+
+void DrudeLangevinIntegrator::setMaxDrudeDistance(double distance) {
+    if (distance < 0)
+        throw OpenMMException("setMaxDrudeDistance: Distance cannot be negative");
+    maxDrudeDistance = distance;
 }
 
 void DrudeLangevinIntegrator::initialize(ContextImpl& contextRef) {
@@ -90,6 +100,8 @@ double DrudeLangevinIntegrator::computeKineticEnergy() {
 }
 
 void DrudeLangevinIntegrator::step(int steps) {
+    if (context == NULL)
+        throw OpenMMException("This Integrator is not bound to a context!");    
     for (int i = 0; i < steps; ++i) {
         context->updateContextState();
         context->calcForcesAndEnergy(true, false);

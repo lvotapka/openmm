@@ -9,7 +9,7 @@
  * Biological Structures at Stanford, funded under the NIH Roadmap for        *
  * Medical Research, grant U54 GM072970. See https://simtk.org.               *
  *                                                                            *
- * Portions copyright (c) 2008-2012 Stanford University and the Authors.      *
+ * Portions copyright (c) 2008-2016 Stanford University and the Authors.      *
  * Authors: Mark Friedrichs, Peter Eastman                                    *
  * Contributors:                                                              *
  *                                                                            *
@@ -71,26 +71,28 @@ public:
      * @param lengthAB      the equilibrium length of the stretch-bend in bond ab [particle1, particle2], measured in nm
      * @param lengthCB      the equilibrium length of the stretch-bend in bond cb [particle3, particle2], measured in nm
      * @param angle         the equilibrium angle in radians
-     * @param k             the force constant for the stretch-bend
+     * @param k1            the force constant of the product of bond ab and angle a-b-c
+     * @param k2            the force constant of the product of bond bc and angle a-b-c (optional, default is the same as k1)
      * @return the index of the stretch-bend that was added
      */
     int addStretchBend(int particle1, int particle2, int particle3, double lengthAB,  double lengthCB, double angle,
-                       double k );
+                       double k1, double k2);
 
     /**
      * Get the force field parameters for a stretch-bend term.
      * 
-     * @param index         the index of the stretch-bend for which to get parameters
-     * @param particle1     the index of the first particle connected by the stretch-bend
-     * @param particle2     the index of the second particle connected by the stretch-bend
-     * @param particle3     the index of the third particle connected by the stretch-bend
-     * @param lengthAB      the equilibrium length of the stretch-bend in bond ab [particle1, particle2], measured in nm
-     * @param lengthCB      the equilibrium length of the stretch-bend in bond cb [particle3, particle2], measured in nm
-     * @param angle         the equilibrium angle in radians
-     * @param k             the force constant for the stretch-bend
+     * @param index              the index of the stretch-bend for which to get parameters
+     * @param[out] particle1     the index of the first particle connected by the stretch-bend
+     * @param[out] particle2     the index of the second particle connected by the stretch-bend
+     * @param[out] particle3     the index of the third particle connected by the stretch-bend
+     * @param[out] lengthAB      the equilibrium length of the stretch-bend in bond ab [particle1, particle2], measured in nm
+     * @param[out] lengthCB      the equilibrium length of the stretch-bend in bond cb [particle3, particle2], measured in nm
+     * @param[out] angle         the equilibrium angle in radians
+     * @param[out] k1            the force constant of the product of bond ab and angle a-b-c
+     * @param[out] k2            the force constant of the product of bond bc and angle a-b-c
      */
-    void getStretchBendParameters(int index, int& particle1, int& particle2, int& particle3,
-                                  double& lengthAB, double& lengthCB, double& angle, double& k ) const;
+    void getStretchBendParameters(int index, int& particle1, int& particle2, int& particle3, double& lengthAB,
+                                  double& lengthCB, double& angle, double& k1, double& k2) const;
 
     /**
      * Set the force field parameters for a stretch-bend term.
@@ -102,26 +104,39 @@ public:
      * @param lengthAB      the equilibrium length of the stretch-bend in bond ab [particle1, particle2], measured in nm
      * @param lengthCB      the equilibrium length of the stretch-bend in bond cb [particle3, particle2], measured in nm
      * @param angle         the equilibrium angle in radians
-     * @param k             the force constant for the stretch-bend
+     * @param k1            the force constant of the product of bond ab and angle a-b-c
+     * @param k2            the force constant of the product of bond bc and angle a-b-c (optional, default is the same as k1)
      */
     void setStretchBendParameters(int index, int particle1, int particle2, int particle3, 
-                                  double lengthAB,  double lengthCB, double angle, double k );
+                                  double lengthAB,  double lengthCB, double angle, double k1, double k2);
     /**
      * Update the per-stretch-bend term parameters in a Context to match those stored in this Force object.  This method provides
      * an efficient method to update certain parameters in an existing Context without needing to reinitialize it.
-     * Simply call setStretchBendParameters() to modify this object's parameters, then call updateParametersInState()
+     * Simply call setStretchBendParameters() to modify this object's parameters, then call updateParametersInContext()
      * to copy them over to the Context.
      * 
      * The only information this method updates is the values of per-stretch-bend term parameters.  The set of particles involved
      * in a term cannot be changed, nor can new terms be added.
      */
     void updateParametersInContext(Context& context);
-
+    /**
+     * Set whether this force should apply periodic boundary conditions when calculating displacements.
+     * Usually this is not appropriate for bonded forces, but there are situations when it can be useful.
+     */
+    void setUsesPeriodicBoundaryConditions(bool periodic);
+    /**
+     * Returns whether or not this force makes use of periodic boundary
+     * conditions.
+     *
+     * @returns true if force uses PBC and false otherwise
+     */
+    bool usesPeriodicBoundaryConditions() const;
 protected:
     ForceImpl* createImpl() const;
 private:
     class StretchBendInfo;
     std::vector<StretchBendInfo> stretchBends;
+    bool usePeriodic;
 };
 
 /**
@@ -131,16 +146,15 @@ private:
 class AmoebaStretchBendForce::StretchBendInfo {
 public:
     int particle1, particle2, particle3;
-    double lengthAB, lengthCB, angle, k;
+    double lengthAB, lengthCB, angle, k1, k2;
     StretchBendInfo() {
         particle1 = particle2  = particle3 = -1;
-        lengthAB  = lengthCB   = angle     = k   = 0.0;
+        lengthAB  = lengthCB   = angle     = k1 = k2 = 0.0;
     }
     StretchBendInfo(int particle1, int particle2, int particle3, 
-                    double lengthAB,  double lengthCB, double angle, double k ) :
+                    double lengthAB,  double lengthCB, double angle, double k1, double k2) :
                     particle1(particle1), particle2(particle2), particle3(particle3), 
-                    lengthAB(lengthAB), lengthCB(lengthCB), angle(angle), k(k) {
-     
+                    lengthAB(lengthAB), lengthCB(lengthCB), angle(angle), k1(k1), k2(k2) {
     }
 };
 

@@ -9,7 +9,7 @@
  * Biological Structures at Stanford, funded under the NIH Roadmap for        *
  * Medical Research, grant U54 GM072970. See https://simtk.org.               *
  *                                                                            *
- * Portions copyright (c) 2010-2014 Stanford University and the Authors.      *
+ * Portions copyright (c) 2010-2016 Stanford University and the Authors.      *
  * Authors: Peter Eastman                                                     *
  * Contributors:                                                              *
  *                                                                            *
@@ -112,16 +112,24 @@ public:
         return key;
     }
     /**
+     * This is the name of the parameter which stores the current temperature at which the
+     * system is being maintained (in Kelvin)
+     */
+    static const std::string& Temperature() {
+        static const std::string key = "MembraneMonteCarloTemperature";
+        return key;
+    }
+    /**
      * Create a MonteCarloMembraneBarostat.
      *
      * @param defaultPressure        the default pressure acting on the system (in bar)
      * @param defaultSurfaceTension  the default surface tension acting on the system (in bar*nm)
-     * @param temperature            the temperature at which the system is being maintained (in Kelvin)
+     * @param defaultTemperature     the default temperature at which the system is being maintained (in Kelvin)
      * @param xymode                 the mode specifying the behavior of the X and Y axes
      * @param zmode                  the mode specifying the behavior of the Z axis
      * @param frequency              the frequency at which Monte Carlo volume changes should be attempted (in time steps)
      */
-    MonteCarloMembraneBarostat(double defaultPressure, double defaultSurfaceTension, double temperature, XYMode xymode, ZMode zmode, int frequency = 25);
+    MonteCarloMembraneBarostat(double defaultPressure, double defaultSurfaceTension, double defaultTemperature, XYMode xymode, ZMode zmode, int frequency = 25);
     /**
      * Get the default pressure acting on the system (in bar).
      *
@@ -171,18 +179,19 @@ public:
         frequency = freq;
     }
     /**
-     * Get the temperature at which the system is being maintained, measured in Kelvin.
+     * Get the default temperature at which the system is being maintained, measured in Kelvin.
      */
-    double getTemperature() const {
-        return temperature;
+    double getDefaultTemperature() const {
+        return defaultTemperature;
     }
     /**
-     * Set the temperature at which the system is being maintained.
+     * Set the default temperature at which the system is being maintained.  This will affect any new Contexts you create,
+     * but not ones that already exist.
      *
      * @param temp     the system temperature, measured in Kelvin.
      */
-    void setTemperature(double temp) {
-        temperature = temp;
+    void setDefaultTemperature(double temp) {
+        defaultTemperature = temp;
     }
     /**
      * Get the mode specifying the behavior of the X and Y axes.
@@ -220,14 +229,27 @@ public:
      * the other hand, no guarantees are made about the behavior of simulations that use the same seed.
      * In particular, Platforms are permitted to use non-deterministic algorithms which produce different
      * results on successive runs, even if those runs were initialized identically.
+     *
+     * If seed is set to 0 (which is the default value assigned), a unique seed is chosen when a Context
+     * is created from this Force. This is done to ensure that each Context receives unique random seeds
+     * without you needing to set them explicitly.
      */
     void setRandomNumberSeed(int seed) {
         randomNumberSeed = seed;
     }
+    /**
+     * Returns whether or not this force makes use of periodic boundary
+     * conditions.
+     *
+     * @returns true if force uses PBC and false otherwise
+     */
+    bool usesPeriodicBoundaryConditions() const {
+        return true;
+    }
 protected:
     ForceImpl* createImpl() const;
 private:
-    double defaultPressure, defaultSurfaceTension, temperature;
+    double defaultPressure, defaultSurfaceTension, defaultTemperature;
     XYMode xymode;
     ZMode zmode;
     int frequency, randomNumberSeed;

@@ -33,7 +33,6 @@
 #include "openmm/Context.h"
 #include "openmm/OpenMMException.h"
 #include "openmm/internal/ContextImpl.h"
-#include "openmm/internal/OSRngSeed.h"
 #include "openmm/kernels.h"
 #include <limits>
 #include <string>
@@ -48,7 +47,8 @@ VariableLangevinIntegrator::VariableLangevinIntegrator(double temperature, doubl
     setFriction(frictionCoeff);
     setErrorTolerance(errorTol);
     setConstraintTolerance(1e-5);
-    setRandomNumberSeed(osrngseed());
+    setRandomNumberSeed(0);
+    setStepSize(0.0);
 }
 
 void VariableLangevinIntegrator::initialize(ContextImpl& contextRef) {
@@ -75,6 +75,8 @@ double VariableLangevinIntegrator::computeKineticEnergy() {
 }
 
 void VariableLangevinIntegrator::step(int steps) {
+    if (context == NULL)
+        throw OpenMMException("This Integrator is not bound to a context!");  
     for (int i = 0; i < steps; ++i) {
         context->updateContextState();
         context->calcForcesAndEnergy(true, false);
@@ -83,6 +85,8 @@ void VariableLangevinIntegrator::step(int steps) {
 }
 
 void VariableLangevinIntegrator::stepTo(double time) {
+    if (context == NULL)
+        throw OpenMMException("This Integrator is not bound to a context!");
     while (time > context->getTime()) {
         context->updateContextState();
         context->calcForcesAndEnergy(true, false);

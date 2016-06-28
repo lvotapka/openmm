@@ -6,7 +6,7 @@
  * Biological Structures at Stanford, funded under the NIH Roadmap for        *
  * Medical Research, grant U54 GM072970. See https://simtk.org.               *
  *                                                                            *
- * Portions copyright (c) 2008-2013 Stanford University and the Authors.      *
+ * Portions copyright (c) 2008-2016 Stanford University and the Authors.      *
  * Authors: Peter Eastman                                                     *
  * Contributors:                                                              *
  *                                                                            *
@@ -40,6 +40,8 @@
 #include "openmm/VirtualSite.h"
 #include "openmm/Context.h"
 #include <algorithm>
+#include <cmath>
+#include <cstdlib>
 #include <iostream>
 #include <map>
 #include <utility>
@@ -82,15 +84,20 @@ ContextImpl::ContextImpl(Context& owner, const System& system, Integrator& integ
     // Validate the list of properties.
 
     const vector<string>& platformProperties = platform->getPropertyNames();
+    map<string, string> validatedProperties;
     for (map<string, string>::const_iterator iter = properties.begin(); iter != properties.end(); ++iter) {
+        string property = iter->first;
+        if (platform->deprecatedPropertyReplacements.find(property) != platform->deprecatedPropertyReplacements.end())
+            property = platform->deprecatedPropertyReplacements[property];
         bool valid = false;
         for (int i = 0; i < (int) platformProperties.size(); i++)
-            if (platformProperties[i] == iter->first) {
+            if (platformProperties[i] == property) {
                 valid = true;
                 break;
             }
         if (!valid)
             throw OpenMMException("Illegal property name: "+iter->first);
+        validatedProperties[property] = iter->second;
     }
     
     // Find the list of kernels required.
@@ -115,6 +122,11 @@ ContextImpl::ContextImpl(Context& owner, const System& system, Integrator& integ
     
     vector<pair<double, Platform*> > candidatePlatforms;
     if (platform == NULL) {
+        char* defaultPlatform = getenv("OPENMM_DEFAULT_PLATFORM");
+        if (defaultPlatform != NULL)
+            platform = &Platform::getPlatformByName(string(defaultPlatform));
+    }
+    if (platform == NULL) {
         for (int i = 0; i < Platform::getNumPlatforms(); i++) {
             Platform& p = Platform::getPlatform(i);
             if (p.supportsKernels(kernelNames))
@@ -132,7 +144,7 @@ ContextImpl::ContextImpl(Context& owner, const System& system, Integrator& integ
     for (int i = candidatePlatforms.size()-1; i >= 0; i--) {
         try {
             this->platform = platform = candidatePlatforms[i].second;
-            platform->contextCreated(*this, properties);
+            platform->contextCreated(*this, validatedProperties);
             break;
         }
         catch (...) {
@@ -235,10 +247,10 @@ void ContextImpl::getPeriodicBoxVectors(Vec3& a, Vec3& b, Vec3& c) {
 void ContextImpl::setPeriodicBoxVectors(const Vec3& a, const Vec3& b, const Vec3& c) {
     if (a[1] != 0.0 || a[2] != 0.0)
         throw OpenMMException("First periodic box vector must be parallel to x.");
-    if (b[0] != 0.0 || b[2] != 0.0)
-        throw OpenMMException("Second periodic box vector must be parallel to y.");
-    if (c[0] != 0.0 || c[1] != 0.0)
-        throw OpenMMException("Third periodic box vector must be parallel to z.");
+    if (b[2] != 0.0)
+        throw OpenMMException("Second periodic box vector must be in the x-y plane.");
+    if (a[0] <= 0.0 || b[1] <= 0.0 || c[2] <= 0.0 || a[0] < 2*fabs(b[0]) || a[0] < 2*fabs(c[0]) || b[1] < 2*fabs(c[1]))
+        throw OpenMMException("Periodic box vectors must be in reduced form.");
     updateStateDataKernel.getAs<UpdateStateDataKernel>().setPeriodicBoxVectors(*this, a, b, c);
 }
 
@@ -259,12 +271,16 @@ double ContextImpl::calcForcesAndEnergy(bool includeForces, bool includeEnergy, 
         throw OpenMMException("Particle positions have not been set");
     lastForceGroups = groups;
     CalcForcesAndEnergyKernel& kernel = initializeForcesKernel.getAs<CalcForcesAndEnergyKernel>();
-    double energy = 0.0;
-    kernel.beginComputation(*this, includeForces, includeEnergy, groups);
-    for (int i = 0; i < (int) forceImpls.size(); ++i)
-        energy += forceImpls[i]->calcForcesAndEnergy(*this, includeForces, includeEnergy, groups);
-    energy += kernel.finishComputation(*this, includeForces, includeEnergy, groups);
-    return energy;
+    while (true) {
+        double energy = 0.0;
+        kernel.beginComputation(*this, includeForces, includeEnergy, groups);
+        for (int i = 0; i < (int) forceImpls.size(); ++i)
+            energy += forceImpls[i]->calcForcesAndEnergy(*this, includeForces, includeEnergy, groups);
+        bool valid = true;
+        energy += kernel.finishComputation(*this, includeForces, includeEnergy, groups, valid);
+        if (valid)
+            return energy;
+    }
 }
 
 int ContextImpl::getLastForceGroups() const {
@@ -438,4 +454,5 @@ void ContextImpl::loadCheckpoint(istream& stream) {
         parameters[name] = value;
     }
     updateStateDataKernel.getAs<UpdateStateDataKernel>().loadCheckpoint(*this, stream);
+    hasSetPositions = true;
 }

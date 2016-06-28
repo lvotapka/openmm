@@ -6,7 +6,7 @@
  * Biological Structures at Stanford, funded under the NIH Roadmap for        *
  * Medical Research, grant U54 GM072970. See https://simtk.org.               *
  *                                                                            *
- * Portions copyright (c) 2008-2009 Stanford University and the Authors.      *
+ * Portions copyright (c) 2008-2016 Stanford University and the Authors.      *
  * Authors:                                                                   *
  * Contributors:                                                              *
  *                                                                            *
@@ -36,35 +36,37 @@
 
 using namespace OpenMM;
 
-AmoebaStretchBendForce::AmoebaStretchBendForce() {
+AmoebaStretchBendForce::AmoebaStretchBendForce() : usePeriodic(false) {
 }
 
 int AmoebaStretchBendForce::addStretchBend(int particle1, int particle2, int particle3,
-                                           double lengthAB,  double lengthCB, double angle, double k) {
-    stretchBends.push_back(StretchBendInfo(particle1, particle2, particle3, lengthAB,  lengthCB, angle, k));
+                                           double lengthAB,  double lengthCB, double angle, double k1, double k2) {
+    stretchBends.push_back(StretchBendInfo(particle1, particle2, particle3, lengthAB,  lengthCB, angle, k1, k2));
     return stretchBends.size()-1;
 }
 
 void AmoebaStretchBendForce::getStretchBendParameters(int index, int& particle1, int& particle2, int& particle3,
-                                                      double& lengthAB, double& lengthCB, double& angle, double& k ) const {
+                                                      double& lengthAB, double& lengthCB, double& angle, double& k1, double& k2) const {
     particle1       = stretchBends[index].particle1;
     particle2       = stretchBends[index].particle2;
     particle3       = stretchBends[index].particle3;
     lengthAB        = stretchBends[index].lengthAB;
     lengthCB        = stretchBends[index].lengthCB;
     angle           = stretchBends[index].angle;
-    k               = stretchBends[index].k;
+    k1              = stretchBends[index].k1;
+    k2              = stretchBends[index].k2;
 }
 
-void AmoebaStretchBendForce::setStretchBendParameters(int index, int particle1, int particle2, int particle3, 
-                                                      double lengthAB,  double lengthCB, double angle, double k) {
+void AmoebaStretchBendForce::setStretchBendParameters(int index, int particle1, int particle2, int particle3,
+                                                      double lengthAB,  double lengthCB, double angle, double k1, double k2) {
     stretchBends[index].particle1  = particle1;
     stretchBends[index].particle2  = particle2;
     stretchBends[index].particle3  = particle3;
     stretchBends[index].lengthAB   = lengthAB;
     stretchBends[index].lengthCB   = lengthCB;
     stretchBends[index].angle      = angle;
-    stretchBends[index].k          = k;
+    stretchBends[index].k1         = k1;
+    stretchBends[index].k2         = k2;
 }
 
 ForceImpl* AmoebaStretchBendForce::createImpl() const {
@@ -73,4 +75,12 @@ ForceImpl* AmoebaStretchBendForce::createImpl() const {
 
 void AmoebaStretchBendForce::updateParametersInContext(Context& context) {
     dynamic_cast<AmoebaStretchBendForceImpl&>(getImplInContext(context)).updateParametersInContext(getContextImpl(context));
+}
+
+void AmoebaStretchBendForce::setUsesPeriodicBoundaryConditions(bool periodic) {
+    usePeriodic = periodic;
+}
+
+bool AmoebaStretchBendForce::usesPeriodicBoundaryConditions() const {
+    return usePeriodic;
 }

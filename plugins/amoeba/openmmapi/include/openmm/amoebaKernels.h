@@ -9,7 +9,7 @@
  * Biological Structures at Stanford, funded under the NIH Roadmap for        *
  * Medical Research, grant U54 GM072970. See https://simtk.org.               *
  *                                                                            *
- * Portions copyright (c) 2008-2012 Stanford University and the Authors.      *
+ * Portions copyright (c) 2008-2015 Stanford University and the Authors.      *
  * Authors:                                                                   *
  * Contributors:                                                              *
  *                                                                            *
@@ -350,10 +350,10 @@ public:
 
     virtual void getInducedDipoles(ContextImpl& context, std::vector<Vec3>& dipoles) = 0;
 
-    virtual void getElectrostaticPotential( ContextImpl& context, const std::vector< Vec3 >& inputGrid,
-                                            std::vector< double >& outputElectrostaticPotential ) = 0;
+    virtual void getElectrostaticPotential(ContextImpl& context, const std::vector< Vec3 >& inputGrid,
+                                           std::vector< double >& outputElectrostaticPotential) = 0;
 
-    virtual void getSystemMultipoleMoments( ContextImpl& context, std::vector< double >& outputMultipoleMoments ) = 0;
+    virtual void getSystemMultipoleMoments(ContextImpl& context, std::vector< double >& outputMultipoleMoments) = 0;
     /**
      * Copy changed parameters over to a context.
      *
@@ -361,6 +361,16 @@ public:
      * @param force      the AmoebaMultipoleForce to copy the parameters from
      */
     virtual void copyParametersToContext(ContextImpl& context, const AmoebaMultipoleForce& force) = 0;
+
+    /**
+     * Get the parameters being used for PME.
+     * 
+     * @param alpha   the separation parameter
+     * @param nx      the number of grid points along the X axis
+     * @param ny      the number of grid points along the Y axis
+     * @param nz      the number of grid points along the Z axis
+     */
+    virtual void getPMEParameters(double& alpha, int& nx, int& ny, int& nz) const = 0;
 };
 
 /**

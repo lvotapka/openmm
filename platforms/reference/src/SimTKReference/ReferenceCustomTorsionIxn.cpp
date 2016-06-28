@@ -1,4 +1,4 @@
-/* Portions copyright (c) 2010-2013 Stanford University and Simbios.
+/* Portions copyright (c) 2010-2016 Stanford University and Simbios.
  * Contributors: Peter Eastman
  *
  * Permission is hereby granted, free of charge, to any person obtaining
@@ -24,8 +24,6 @@
 #include <string.h>
 #include <sstream>
 
-#include "SimTKOpenMMCommon.h"
-#include "SimTKOpenMMLog.h"
 #include "SimTKOpenMMUtilities.h"
 #include "ReferenceCustomTorsionIxn.h"
 #include "ReferenceForce.h"
@@ -41,7 +39,7 @@ using namespace OpenMM;
 
 ReferenceCustomTorsionIxn::ReferenceCustomTorsionIxn(const Lepton::CompiledExpression& energyExpression,
         const Lepton::CompiledExpression& forceExpression, const vector<string>& parameterNames, map<string, double> globalParameters) :
-        energyExpression(energyExpression), forceExpression(forceExpression) {
+        energyExpression(energyExpression), forceExpression(forceExpression), usePeriodic(false) {
 
     energyTheta = ReferenceForce::getVariablePointer(this->energyExpression, "theta");
     forceTheta = ReferenceForce::getVariablePointer(this->forceExpression, "theta");
@@ -62,14 +60,14 @@ ReferenceCustomTorsionIxn::ReferenceCustomTorsionIxn(const Lepton::CompiledExpre
 
    --------------------------------------------------------------------------------------- */
 
-ReferenceCustomTorsionIxn::~ReferenceCustomTorsionIxn( ){
+ReferenceCustomTorsionIxn::~ReferenceCustomTorsionIxn() {
+}
 
-   // ---------------------------------------------------------------------------------------
-
-   // static const char* methodName = "\nReferenceCustomTorsionIxn::~ReferenceCustomTorsionIxn";
-
-   // ---------------------------------------------------------------------------------------
-
+void ReferenceCustomTorsionIxn::setPeriodic(OpenMM::RealVec* vectors) {
+    usePeriodic = true;
+    boxVectors[0] = vectors[0];
+    boxVectors[1] = vectors[1];
+    boxVectors[2] = vectors[2];
 }
 
 /**---------------------------------------------------------------------------------------
@@ -84,11 +82,11 @@ ReferenceCustomTorsionIxn::~ReferenceCustomTorsionIxn( ){
 
    --------------------------------------------------------------------------------------- */
 
-void ReferenceCustomTorsionIxn::calculateBondIxn( int* atomIndices,
+void ReferenceCustomTorsionIxn::calculateBondIxn(int* atomIndices,
                                                 vector<RealVec>& atomCoordinates,
                                                 RealOpenMM* parameters,
                                                 vector<RealVec>& forces,
-                                                RealOpenMM* totalEnergy ) const {
+                                                RealOpenMM* totalEnergy) const {
 
    static const std::string methodName = "\nReferenceCustomTorsionIxn::calculateTorsionIxn";
 
@@ -109,9 +107,16 @@ void ReferenceCustomTorsionIxn::calculateBondIxn( int* atomIndices,
    int atomBIndex = atomIndices[1];
    int atomCIndex = atomIndices[2];
    int atomDIndex = atomIndices[3];
-   ReferenceForce::getDeltaR(atomCoordinates[atomBIndex], atomCoordinates[atomAIndex], deltaR[0]);
-   ReferenceForce::getDeltaR(atomCoordinates[atomBIndex], atomCoordinates[atomCIndex], deltaR[1]);
-   ReferenceForce::getDeltaR(atomCoordinates[atomDIndex], atomCoordinates[atomCIndex], deltaR[2]);
+   if (usePeriodic) {
+      ReferenceForce::getDeltaRPeriodic(atomCoordinates[atomBIndex], atomCoordinates[atomAIndex], boxVectors, deltaR[0]);  
+      ReferenceForce::getDeltaRPeriodic(atomCoordinates[atomBIndex], atomCoordinates[atomCIndex], boxVectors, deltaR[1]);  
+      ReferenceForce::getDeltaRPeriodic(atomCoordinates[atomDIndex], atomCoordinates[atomCIndex], boxVectors, deltaR[2]);  
+   }
+   else {
+      ReferenceForce::getDeltaR(atomCoordinates[atomBIndex], atomCoordinates[atomAIndex], deltaR[0]);  
+      ReferenceForce::getDeltaR(atomCoordinates[atomBIndex], atomCoordinates[atomCIndex], deltaR[1]);  
+      ReferenceForce::getDeltaR(atomCoordinates[atomDIndex], atomCoordinates[atomCIndex], deltaR[2]);  
+   }
 
    // Visual Studio complains if crossProduct declared as 'crossProduct[2][3]'
 
@@ -136,20 +141,20 @@ void ReferenceCustomTorsionIxn::calculateBondIxn( int* atomIndices,
 
    RealOpenMM internalF[4][3];
    RealOpenMM forceFactors[4];
-   RealOpenMM normCross1         = DOT3( crossProduct[0], crossProduct[0] );
+   RealOpenMM normCross1         = DOT3(crossProduct[0], crossProduct[0]);
    RealOpenMM normBC             = deltaR[1][ReferenceForce::RIndex];
               forceFactors[0]    = (-dEdAngle*normBC)/normCross1;
 
-   RealOpenMM normCross2         = DOT3( crossProduct[1], crossProduct[1] );
+   RealOpenMM normCross2         = DOT3(crossProduct[1], crossProduct[1]);
               forceFactors[3]    = (dEdAngle*normBC)/normCross2;
 
-              forceFactors[1]    = DOT3( deltaR[0], deltaR[1] );
+              forceFactors[1]    = DOT3(deltaR[0], deltaR[1]);
               forceFactors[1]   /= deltaR[1][ReferenceForce::R2Index];
 
-              forceFactors[2]    = DOT3( deltaR[2], deltaR[1] );
+              forceFactors[2]    = DOT3(deltaR[2], deltaR[1]);
               forceFactors[2]   /= deltaR[1][ReferenceForce::R2Index];
 
-   for( int ii = 0; ii < 3; ii++ ){
+   for (int ii = 0; ii < 3; ii++) {
 
       internalF[0][ii]  = forceFactors[0]*crossProduct[0][ii];
       internalF[3][ii]  = forceFactors[3]*crossProduct[1][ii];
@@ -162,7 +167,7 @@ void ReferenceCustomTorsionIxn::calculateBondIxn( int* atomIndices,
 
    // accumulate forces
 
-   for( int ii = 0; ii < 3; ii++ ){
+   for (int ii = 0; ii < 3; ii++) {
       forces[atomAIndex][ii] += internalF[0][ii];
       forces[atomBIndex][ii] -= internalF[1][ii];
       forces[atomCIndex][ii] -= internalF[2][ii];
